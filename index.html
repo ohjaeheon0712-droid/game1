@@ -2,102 +2,114 @@
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <title>High-Stack: Fixed Size & Precision</title>
+    <title>High-Stack: Ultimate Precision Edition</title>
     <script src="https://cdn.jsdelivr.net/npm/poly-decomp@0.3.0/build/decomp.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"></script>
     <style>
-        body { margin: 0; background: #1a1a1a; display: flex; justify-content: center; align-items: center; height: 100vh; overflow: hidden; font-family: sans-serif; }
-        #ui { position: absolute; top: 20px; left: 20px; color: white; pointer-events: none; z-index: 10; background: rgba(0,0,0,0.7); padding: 20px; border-radius: 12px; }
-        canvas { background: #fff; border: 4px solid #333; box-shadow: 0 0 50px rgba(0,0,0,0.5); }
-        #score { color: #00ff88; font-weight: bold; }
-        #loading { position: absolute; color: #ffeb3b; font-size: 20px; font-weight: bold; z-index: 100; }
+        body { margin: 0; background: #1a1a1a; display: flex; justify-content: center; align-items: center; height: 100vh; overflow: hidden; font-family: 'Malgun Gothic', sans-serif; }
+        #ui { position: absolute; top: 20px; left: 20px; color: white; pointer-events: none; z-index: 10; background: rgba(0,0,0,0.8); padding: 20px; border-radius: 12px; border: 1px solid #444; }
+        canvas { background: #fff; border: 5px solid #333; box-shadow: 0 0 50px rgba(0,0,0,0.5); }
+        #score { color: #00ff88; font-weight: bold; font-size: 1.5em; }
+        #loading { position: absolute; color: #ffeb3b; font-size: 24px; font-weight: bold; z-index: 100; text-shadow: 2px 2px 4px rgba(0,0,0,0.5); }
     </style>
 </head>
 <body>
-    <div id="loading">이미지 분석 중... (잠시만 기다려주세요)</div>
+    <div id="loading">이미지 및 물리 엔진 분석 중...</div>
     <div id="ui">
-        <h1 style="margin:0;">Blocks: <span id="score">0</span></h1>
-        <p style="font-size: 0.8em; color: #ccc;">[A] 회전 | [Click] 낙하 | [R] 재시작</p>
+        <div style="margin-bottom: 10px;">Blocks: <span id="score">0</span></div>
+        <div style="font-size: 0.85em; color: #ccc;">
+            [A] 블록 회전<br>
+            [Click] 블록 낙하<br>
+            [R] 게임 재시작
+        </div>
+        <div style="margin-top:10px; font-size: 0.75em; color: #ff5555;">빨간선: 실제 물리 충돌 범위</div>
     </div>
     <canvas id="gameCanvas"></canvas>
 
     <script>
         const { Engine, Bodies, Composite, Body, Common, Vertices } = Matter;
-        Common.setDecomp(decomp); // ㄴ자 모양 처리를 위한 설정
+        // 오목한 다각형 분해를 위해 라이브러리 등록
+        Common.setDecomp(decomp);
 
         const engine = Engine.create();
         const canvas = document.getElementById('gameCanvas');
         const ctx = canvas.getContext('2d');
         canvas.width = 800;
         canvas.height = 750;
-        engine.gravity.y = 1.3;
+        
+        // 중력 설정 (약간 묵직하게)
+        engine.gravity.y = 1.5;
 
-        const FIXED_SIZE = 100; // ⭐ 모든 블록의 크기를 100px로 통일
+        const FIXED_SIZE = 100; // 모든 블록의 크기를 100px로 고정
 
-        // ==========================================
-        // ⭐ 핵심: 이미지의 실제 모양을 100x100에 맞춰 따내는 함수
-        // ==========================================
+        // --- 이미지 외곽선 정밀 추출 함수 ---
         function getPreciseVertices(img, targetSize) {
             const tempCanvas = document.createElement('canvas');
             const tCtx = tempCanvas.getContext('2d');
             tempCanvas.width = targetSize;
             tempCanvas.height = targetSize;
             
-            // 이미지를 100x100에 꽉 차게 그리기
+            // 이미지를 100x100 크기로 강제 스케일링하여 그림
             tCtx.drawImage(img, 0, 0, targetSize, targetSize);
             const imageData = tCtx.getImageData(0, 0, targetSize, targetSize).data;
             
             let points = [];
-            // 픽셀을 전수 조사하여 투명하지 않은 부분의 좌표 추출
-            for (let y = 0; y < targetSize; y += 4) { // 성능을 위해 4픽셀 단위로 스캔
-                for (let x = 0; x < targetSize; x += 4) {
+            // 픽셀 스캔 (알파값이 있는 부분만 좌표 수집)
+            for (let y = 0; y < targetSize; y += 3) { 
+                for (let x = 0; x < targetSize; x += 3) {
                     const alpha = imageData[(y * targetSize + x) * 4 + 3];
-                    if (alpha > 120) { // 투명도가 낮을 때만 점 추가
+                    if (alpha > 120) { 
                         points.push({ x: x, y: y });
                     }
                 }
             }
             
-            // 점들의 집합으로부터 실제 외곽선 추출
+            // 점들을 연결해 물리 외곽선 생성
             const hull = Vertices.hull(points);
             const center = Vertices.centre(hull);
             
-            // 중심을 0,0으로 맞춘 좌표 리스트 반환
+            // 중심점 보정 후 반환
             return hull.map(p => ({ x: p.x - center.x, y: p.y - center.y }));
         }
 
         const configs = {
-            "S": { path: "images/9aff562fdf575bcacbea3cd3330c576e (3).png" },
-            "D": { path: "images/9aff562fdf575bcacbea3cd3330c576e.png" },
-            "L": { path: "images/63a1aff59ec47d0b600ea81c51125b1d (1).png" }
+            "Square": { path: "images/9aff562fdf575bcacbea3cd3330c576e (3).png" },
+            "Diamond": { path: "images/9aff562fdf575bcacbea3cd3330c576e.png" },
+            "L-Shape": { path: "images/63a1aff59ec47d0b600ea81c51125b1d (1).png" }
         };
 
-        const ground = Bodies.rectangle(400, 710, 400, 40, { isStatic: true, friction: 1 });
+        // 바닥판 (마찰력 최대치)
+        const ground = Bodies.rectangle(400, 710, 400, 40, { 
+            isStatic: true, 
+            friction: 1.0, 
+            frictionStatic: 10 
+        });
         Composite.add(engine.world, ground);
 
         let blocks = [];
         let score = 0;
-        let ghost = { x: 400, y: 100, angle: 0, type: "S" };
+        let ghost = { x: 400, y: 100, angle: 0, type: "Square" };
         let gameOver = false;
         let isReady = false;
 
-        // 이미지 로딩 및 분석
-        let loaded = 0;
-        Object.keys(configs).forEach(key => {
+        // 이미지 로딩 및 분석 프로세스
+        let loadedCount = 0;
+        const keys = Object.keys(configs);
+        keys.forEach(key => {
             const img = new Image();
             img.src = configs[key].path;
             img.onload = () => {
-                // 로드 즉시 100px 기준으로 외곽선 고정
                 configs[key].vertices = getPreciseVertices(img, FIXED_SIZE);
                 configs[key].imgElem = img;
-                loaded++;
-                if (loaded === 3) {
+                loadedCount++;
+                if (loadedCount === keys.length) {
                     isReady = true;
                     document.getElementById('loading').style.display = 'none';
                 }
             };
         });
 
+        // 조작 이벤트
         window.addEventListener('mousemove', (e) => {
             const rect = canvas.getBoundingClientRect();
             ghost.x = (e.clientX - rect.left) * (canvas.width / rect.width);
@@ -105,17 +117,20 @@
 
         window.addEventListener('keydown', (e) => {
             if (e.key.toLowerCase() === 'a') ghost.angle += 0.4;
-            if (e.key.toLowerCase() === 'r') location.reload();
+            if (e.key.toLowerCase() === 'r') location.reload(); // 재시작
         });
 
         window.addEventListener('mousedown', () => {
             if (!isReady || gameOver) return;
             const conf = configs[ghost.type];
             
-            // 미리 계산된 정밀 100px 외곽선으로 생성
+            // ⭐ 쫀득한 물리 설정 (마찰력 및 저항 강화)
             const newBlock = Bodies.fromVertices(ghost.x, ghost.y, [conf.vertices], {
-                friction: 0.8,
-                restitution: 0.2
+                friction: 1.0,         // 미끄러짐 방지
+                frictionStatic: 10.0,  // 정지 마찰력 (딱 달라붙게)
+                restitution: 0.05,     // 튕김 방지
+                frictionAir: 0.03,     // 공기 저항 (낙하 시 안정감)
+                slop: 0.05             // 미세 겹침 허용 (흔들림 방지)
             });
 
             if (newBlock) {
@@ -128,8 +143,7 @@
                 
                 isReady = false;
                 setTimeout(() => {
-                    const keys = Object.keys(configs);
-                    ghost.type = keys[Math.floor(Math.random() * 3)];
+                    ghost.type = keys[Math.floor(Math.random() * keys.length)];
                     ghost.angle = 0;
                     isReady = true;
                 }, 1000);
@@ -140,7 +154,7 @@
             Engine.update(engine);
             ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-            // 바닥
+            // 바닥 그리기
             ctx.fillStyle = "#333";
             ctx.fillRect(400 - 200, 690, 400, 40);
 
@@ -149,11 +163,11 @@
                 ctx.save();
                 ctx.translate(body.position.x, body.position.y);
                 ctx.rotate(body.angle);
-                // 이미지를 강제로 FIXED_SIZE(100x100)로 그리기
+                // 이미지를 100x100 크기에 맞춰 그림
                 ctx.drawImage(conf.imgElem, -FIXED_SIZE/2, -FIXED_SIZE/2, FIXED_SIZE, FIXED_SIZE);
                 ctx.restore();
 
-                // 디버깅용 빨간색 물리 선
+                // [디버그용 빨간선] 실제 물리 경계 확인
                 ctx.beginPath();
                 body.parts.forEach(part => {
                     part.vertices.forEach((v, i) => {
@@ -162,12 +176,13 @@
                     ctx.lineTo(part.vertices[0].x, part.vertices[0].y);
                 });
                 ctx.strokeStyle = "red";
+                ctx.lineWidth = 1;
                 ctx.stroke();
 
                 if (body.position.y > 850) gameOver = true;
             });
 
-            // 미리보기
+            // 낙하 전 미리보기 (Ghost)
             if (isReady && !gameOver) {
                 const conf = configs[ghost.type];
                 ctx.save();
@@ -178,13 +193,19 @@
                 ctx.restore();
             }
 
+            // 게임 오버 연출
             if (gameOver) {
-                ctx.fillStyle = "rgba(0,0,0,0.8)";
+                ctx.fillStyle = "rgba(0,0,0,0.85)";
                 ctx.fillRect(0, 0, canvas.width, canvas.height);
-                ctx.fillStyle = "white";
+                ctx.fillStyle = "#ff4444";
                 ctx.textAlign = "center";
-                ctx.font = "bold 50px Arial";
-                ctx.fillText("GAME OVER", 400, 370);
+                ctx.font = "bold 60px Arial";
+                ctx.fillText("GAME OVER", 400, 350);
+                ctx.fillStyle = "white";
+                ctx.font = "25px Arial";
+                ctx.fillText("최종 점수: " + score, 400, 410);
+                ctx.font = "20px Arial";
+                ctx.fillText("R키를 눌러 재시작하세요", 400, 460);
             }
             requestAnimationFrame(draw);
         }
