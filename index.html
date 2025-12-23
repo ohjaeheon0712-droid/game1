@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <title>High-Stack Challenge: Ultimate</title>
+    <title>High-Stack Challenge: Perfect Physics</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"></script>
     <style>
         body { margin: 0; padding: 0; overflow: hidden; background: #1a1a1a; display: flex; justify-content: center; align-items: center; height: 100vh; font-family: 'Malgun Gothic', sans-serif; }
@@ -33,21 +33,22 @@
         canvas.height = 720;
 
         // --- 설정 및 이미지 정보 ---
+        // vertices 데이터는 이미지가 로드되었을 때만 사용됩니다.
         const blockConfigs = {
             "Square": {
                 vertices: [{x:-50, y:-50}, {x:50, y:-50}, {x:50, y:50}, {x:-50, y:50}],
                 image: "images/9aff562fdf575bcacbea3cd3330c576e (3).png",
-                color: "#4CAF50", w: 100, h: 100
+                color: "#4CAF50" // 대체 박스 색상 (초록)
             },
             "Diamond": {
                 vertices: [{x:0, y:-70}, {x:70, y:0}, {x:0, y:70}, {x:-70, y:0}],
                 image: "images/9aff562fdf575bcacbea3cd3330c576e.png",
-                color: "#2196F3", w: 140, h: 140
+                color: "#2196F3" // 대체 박스 색상 (파랑)
             },
             "L_Shape": {
-                parts: [{x:0, y:25, w:100, h:50}, {x:-25, y:-25, w:50, h:50}],
+                // L_Shape는 vertices 대신 parts를 사용
                 image: "images/63a1aff59ec47d0b600ea81c51125b1d (1).png",
-                color: "#FF9800", w: 100, h: 100
+                color: "#FF9800" // 대체 박스 색상 (주황)
             }
         };
 
@@ -61,7 +62,7 @@
             return imageCache[path];
         }
 
-        // 1. 바닥판 (길이를 350으로 늘림)
+        // 1. 바닥판 (길이 350)
         const groundWidth = 350;
         const ground = Bodies.rectangle(400, 690, groundWidth, 30, { isStatic: true, friction: 1.0 });
         Composite.add(world, ground);
@@ -73,7 +74,7 @@
         let gameOver = false;
         let canCreate = true;
 
-        // 2. 랭크 업데이트 로직
+        // 랭크 업데이트 로직
         function updateRank() {
             if (score >= 20) currentRank = "🥇 God of Stack";
             else if (score >= 15) currentRank = "🏆 Grand Master";
@@ -94,20 +95,37 @@
             if (e.key.toLowerCase() === 'r' && gameOver) location.reload();
         });
 
+        // ⭐ 핵심 수정 부분: 마우스 클릭 시 물리 바디 결정 ⭐
         window.addEventListener('mousedown', () => {
             if (canCreate && !gameOver) {
                 const config = blockConfigs[ghost.type];
+                
+                // 1. 클릭하는 순간 이미지가 로드되었는지 확인
+                const img = getImg(config.image);
+                const isImageLoaded = img.complete && img.naturalWidth !== 0;
+
                 let newBody;
-                if (ghost.type === "L_Shape") {
-                    const p1 = Bodies.rectangle(ghost.x, ghost.y + 25, 100, 50);
-                    const p2 = Bodies.rectangle(ghost.x - 25, ghost.y - 25, 50, 50);
-                    newBody = Body.create({ parts: [p1, p2] });
+
+                if (isImageLoaded) {
+                    // 2-A. 이미지가 있으면: 원래대로 복잡한 모양 생성
+                    if (ghost.type === "L_Shape") {
+                        const p1 = Bodies.rectangle(ghost.x, ghost.y + 25, 100, 50);
+                        const p2 = Bodies.rectangle(ghost.x - 25, ghost.y - 25, 50, 50);
+                        newBody = Body.create({ parts: [p1, p2] });
+                    } else {
+                        newBody = Bodies.fromVertices(ghost.x, ghost.y, [config.vertices]);
+                    }
                 } else {
-                    newBody = Bodies.fromVertices(ghost.x, ghost.y, [config.vertices]);
+                    // 2-B. 이미지가 없으면: 눈에 보이는 것과 같은 100x100 정사각형 생성
+                    // (그리기 함수에서 대체 박스를 100x100으로 그리고 있기 때문)
+                    newBody = Bodies.rectangle(ghost.x, ghost.y, 100, 100);
                 }
+
+                // 공통 속성 적용
                 Body.setAngle(newBody, ghost.angle);
                 newBody.friction = 0.8;
-                newBody.customType = ghost.type;
+                newBody.customType = ghost.type; // 나중에 그릴 때 색상/이미지 결정을 위해 타입 저장
+
                 blocks.push(newBody);
                 Composite.add(world, newBody);
                 
@@ -132,7 +150,7 @@
             ctx.fillStyle = "#333";
             ctx.fillRect(400 - (groundWidth/2), 675, groundWidth, 30);
 
-            // 블록 그리기 및 게임오버 체크
+            // 블록 그리기
             blocks.forEach(body => {
                 ctx.save();
                 ctx.translate(body.position.x, body.position.y);
@@ -140,16 +158,18 @@
                 const config = blockConfigs[body.customType];
                 const img = getImg(config.image);
                 
+                // 이미지가 로드되었으면 이미지, 아니면 색깔 박스(100x100) 그리기
                 if (img.complete && img.naturalWidth !== 0) {
                     ctx.drawImage(img, -50, -50, 100, 100);
                 } else {
                     ctx.fillStyle = config.color;
                     ctx.globalAlpha = 0.8;
+                    // 여기가 대체 박스의 크기(100x100)를 결정하는 부분입니다.
                     ctx.fillRect(-50, -50, 100, 100);
                 }
                 ctx.restore();
 
-                // 판정: 바닥(720) 아래로 블록이 추락하면 게임오버
+                // 게임오버 체크
                 if (body.position.y > 850) {
                     gameOver = true;
                 }
@@ -162,9 +182,11 @@
                 ctx.translate(ghost.x, ghost.y);
                 ctx.rotate(ghost.angle);
                 const ghostImg = getImg(blockConfigs[ghost.type].image);
+                
                 if (ghostImg.complete && ghostImg.naturalWidth !== 0) {
                     ctx.drawImage(ghostImg, -50, -50, 100, 100);
                 } else {
+                    // 이미지가 없을 때 미리보기도 단순 네모로 표시
                     ctx.fillStyle = "gray";
                     ctx.fillRect(-50, -50, 100, 100);
                 }
