@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <title>High-Stack: Pro Precision</title>
+    <title>High-Stack: Solid Foundation</title>
     <script src="https://cdn.jsdelivr.net/npm/poly-decomp@0.3.0/build/decomp.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"></script>
     <style>
@@ -16,7 +16,7 @@
     </style>
 </head>
 <body>
-    <div id="loading">이미지 분석 및 크기 보정 중...</div>
+    <div id="loading">물리 엔진 최적화 및 정밀 분석 중...</div>
     <div id="ui">
         <div>Blocks: <span id="score">0</span></div>
         <div id="rank">Rank: 브론즈</div>
@@ -27,20 +27,25 @@
     <canvas id="gameCanvas"></canvas>
 
     <script>
-        const { Engine, Bodies, Composite, Body, Common, Vertices } = Matter;
+        const { Engine, Bodies, Composite, Body, Common, Vertices, Render } = Matter;
         Common.setDecomp(decomp);
 
-        const engine = Engine.create();
+        // --- ⭐ 물리 엔진 설정 최적화 ---
+        const engine = Engine.create({
+            enableSleeping: true, // 1. 수면 모드: 멈춘 블록을 고정시켜 하중 붕괴 방지
+            positionIterations: 10, // 2. 위치 연산 정밀도 증가 (기본 6)
+            velocityIterations: 10  // 3. 속도 연산 정밀도 증가 (기본 4)
+        });
+
         const canvas = document.getElementById('gameCanvas');
         const ctx = canvas.getContext('2d');
         canvas.width = 800;
         canvas.height = 750;
-        engine.gravity.y = 1.8; // 중력을 조금 더 높여 안정감 부여
+        engine.gravity.y = 1.2; // 4. 중력을 살짝 낮춰 하단 압박 완화
 
         const FIXED_SIZE = 100;
         const COOLDOWN_MS = 5000;
 
-        // --- ⭐ 핵심: 이미지 내 실제 물체 크기만 추출하여 100x100으로 표준화 ---
         function getPreciseVertices(img, targetSize) {
             const scanCanvas = document.createElement('canvas');
             const sCtx = scanCanvas.getContext('2d');
@@ -52,7 +57,6 @@
             let minX = img.width, minY = img.height, maxX = 0, maxY = 0;
             let found = false;
 
-            // 1. 투명하지 않은 픽셀의 경계(Bounding Box) 찾기
             for (let y = 0; y < img.height; y++) {
                 for (let x = 0; x < img.width; x++) {
                     if (fullData[(y * img.width + x) * 4 + 3] > 50) {
@@ -67,7 +71,6 @@
             const contentW = maxX - minX;
             const contentH = maxY - minY;
 
-            // 2. 경계 내부만 잘라서 targetSize(100x100) 캔버스에 그리기
             const tempCanvas = document.createElement('canvas');
             const tCtx = tempCanvas.getContext('2d');
             tempCanvas.width = targetSize;
@@ -87,7 +90,6 @@
             
             return {
                 vertices: hull.map(p => ({ x: p.x - center.x, y: p.y - center.y })),
-                // 그릴 때 사용할 보정된 이미지 데이터 저장
                 croppedCanvas: tempCanvas 
             };
         }
@@ -108,11 +110,12 @@
             "img4": { path: "images/9aff562fdf575bcacbea3cd3330c576e.png" },
             "img5": { path: "images/9aff562fdf575bcacbea3cd3330c576e-Photoroom.png" },
             "img6": { path: "images/a9d63d62885a7884a2bbc333dfce56ab-Photoroom.png" },
-            "img7": { path: "images/63a1aff59ec47d0b600ea81c51125b1d (1).png" }
+            "img7": { path: "images/f3e9e04346d7e58e0603680d1bd2ea13-Photoroom.png" },
+            "img8": { path: "images/63a1aff59ec47d0b600ea81c51125b1d (1).png" }
         };
 
         const ground = Bodies.rectangle(400, 710, 420, 40, { 
-            isStatic: true, friction: 1.0, frictionStatic: 20 
+            isStatic: true, friction: 1.0, frictionStatic: 30 
         });
         Composite.add(engine.world, ground);
 
@@ -132,7 +135,7 @@
             img.onload = () => {
                 const result = getPreciseVertices(img, FIXED_SIZE);
                 configs[key].vertices = result.vertices;
-                configs[key].imgElem = result.croppedCanvas; // 보정된 캔버스를 이미지로 사용
+                configs[key].imgElem = result.croppedCanvas;
                 loaded++;
                 if (loaded === keys.length) {
                     isReady = true;
@@ -155,14 +158,15 @@
             if (!isReady || gameOver || cooldownActive) return;
             
             const conf = configs[ghost.type];
-            // ⭐ 미끄럼 방지용 고마찰 물리 옵션
+            // ⭐ 더 견고한 물리 옵션 적용
             const newBlock = Bodies.fromVertices(ghost.x, ghost.y, [conf.vertices], {
                 friction: 1.0, 
-                frictionStatic: 20.0, 
-                restitution: 0.02, 
-                frictionAir: 0.04,
-                density: 0.05,
-                slop: 0.05
+                frictionStatic: 50.0, // 정지 마찰력 극대화
+                restitution: 0,       // 탄성 제거 (절대 튀지 않음)
+                frictionAir: 0.05,    // 낙하 시 휘청임 방지
+                density: 1.0,         // 밀도를 높여 하중에 견디게 함
+                slop: 0.01,           // 겹침 허용치 최소화
+                sleepThreshold: 30    // 30프레임 동안 안 움직이면 수면
             });
 
             if (newBlock) {
@@ -170,14 +174,11 @@
                 newBlock.customType = ghost.type;
                 blocks.push(newBlock);
                 Composite.add(engine.world, newBlock);
-                
                 score++;
                 document.getElementById('score').innerText = score;
                 const r = getRank(score);
                 document.getElementById('rank').innerText = "Rank: " + r.name;
                 document.getElementById('rank').style.color = r.color;
-
-                // 5초 쿨타임 시작
                 startCooldown();
             }
         });
@@ -186,7 +187,6 @@
             cooldownActive = true;
             cooldownTimeRemaining = 5;
             const cdDisplay = document.getElementById('cooldown');
-            
             const timer = setInterval(() => {
                 cooldownTimeRemaining--;
                 if (cooldownTimeRemaining > 0) {
@@ -206,7 +206,6 @@
             Engine.update(engine);
             ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-            // 바닥
             ctx.fillStyle = "#333";
             ctx.fillRect(400 - 210, 690, 420, 40);
 
@@ -215,6 +214,10 @@
                 ctx.save();
                 ctx.translate(body.position.x, body.position.y);
                 ctx.rotate(body.angle);
+                
+                // 수면 상태(Sleeping)이면 투명도를 살짝 조절하여 정지됨을 표시 (선택 사항)
+                if (body.isSleeping) ctx.globalAlpha = 0.9;
+                
                 ctx.drawImage(conf.imgElem, -FIXED_SIZE/2, -FIXED_SIZE/2, FIXED_SIZE, FIXED_SIZE);
                 ctx.restore();
 
@@ -226,14 +229,13 @@
                     });
                     ctx.lineTo(part.vertices[0].x, part.vertices[0].y);
                 });
-                ctx.strokeStyle = "red";
+                ctx.strokeStyle = body.isSleeping ? "blue" : "red"; // 자는 블록은 파란선으로 표시
                 ctx.lineWidth = 1;
                 ctx.stroke();
 
                 if (body.position.y > 850) gameOver = true;
             });
 
-            // 미리보기 (쿨타임 중에는 투명도 더 낮춤)
             if (isReady && !gameOver) {
                 const conf = configs[ghost.type];
                 ctx.save();
@@ -251,9 +253,6 @@
                 ctx.textAlign = "center";
                 ctx.font = "bold 60px Arial";
                 ctx.fillText("GAME OVER", 400, 350);
-                ctx.fillStyle = "white";
-                ctx.font = "25px Arial";
-                ctx.fillText("최종 랭크: " + getRank(score).name, 400, 410);
             }
             requestAnimationFrame(draw);
         }
