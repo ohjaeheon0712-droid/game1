@@ -1,54 +1,204 @@
-// --- 각 이미지의 실제 모양에 맞게 물리 모델(Vertices) 수정 ---
-const blockConfigs = {
-    "Square": {
-        // 정사각형 모양 (80x80 이미지 기준)
-        vertices: [{x:-40, y:-40}, {x:40, y:-40}, {x:40, y:40}, {x:-40, y:40}],
-        image: "images/9aff562fdf575bcacbea3cd3330c576e (3).png",
-        color: "#4CAF50", w: 80, h: 80
-    },
-    "Diamond": {
-        // 마름모 모양 (중앙에서 끝점까지의 거리를 정교하게 조절)
-        vertices: [{x:0, y:-45}, {x:45, y:0}, {x:0, y:45}, {x:-45, y:0}],
-        image: "images/9aff562fdf575bcacbea3cd3330c576e.png",
-        color: "#2196F3", w: 90, h: 90
-    },
-    "L_Shape": {
-        // ⭐ L자 모양의 투명한 공간을 물리적으로 비우기 위해 두 개의 사각형(Parts)을 합침
-        // 아래 숫자를 조절하여 이미지 속 L자 두께와 길이에 딱 맞추세요.
-        parts: [
-            { x: 0, y: 20, w: 80, h: 40 },   // L의 가로 바닥 부분
-            { x: -20, y: -20, w: 40, h: 40 } // L의 세로 기둥 부분
-        ],
-        image: "images/63a1aff59ec47d0b600ea81c51125b1d (1).png",
-        color: "#FF9800", w: 100, h: 100
-    }
-};
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <title>High-Stack Challenge: Perfect Edition</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/poly-decomp.js/0.3.0/decomp.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"></script>
+    <style>
+        body { margin: 0; padding: 0; overflow: hidden; background: #1a1a1a; display: flex; justify-content: center; align-items: center; height: 100vh; font-family: 'Malgun Gothic', sans-serif; }
+        #ui { position: absolute; top: 20px; left: 20px; color: white; pointer-events: none; z-index: 10; background: rgba(0,0,0,0.6); padding: 20px; border-radius: 12px; border: 1px solid #444; }
+        canvas { background: white; border: 5px solid #333; box-shadow: 0 0 50px rgba(0,0,0,0.5); }
+        #rank { color: #ffeb3b; font-weight: bold; }
+        #score { color: #00ff88; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <div id="ui">
+        <h1 style="margin:0;">Blocks: <span id="score">0</span></h1>
+        <p style="margin:10px 0;">Rank: <span id="rank">Rookie</span></p>
+        <p style="font-size: 0.85em; color: #ccc;">[A] Rotate | [Click] Drop | [R] Restart</p>
+    </div>
 
-// ... (기타 코드는 동일) ...
+    <canvas id="gameCanvas"></canvas>
 
-// 블록 생성 시 실제 모양 적용 부분
-window.addEventListener('mousedown', () => {
-    if (canCreate && !gameOver) {
-        const config = blockConfigs[ghost.type];
-        const img = getImg(config.image);
-        const isImageLoaded = img.complete && img.naturalWidth !== 0;
-
-        let newBody;
-        if (isImageLoaded) {
-            if (ghost.type === "L_Shape") {
-                // L자 모양은 두 개의 파츠를 합쳐서 'ㄴ' 모양 히트박스를 만듭니다.
-                const p1 = Bodies.rectangle(ghost.x + config.parts[0].x, ghost.y + config.parts[0].y, config.parts[0].w, config.parts[0].h);
-                const p2 = Bodies.rectangle(ghost.x + config.parts[1].x, ghost.y + config.parts[1].y, config.parts[1].w, config.parts[1].h);
-                newBody = Body.create({ parts: [p1, p2] });
-            } else {
-                // 사각형과 마름모는 설정된 꼭짓점(vertices) 대로 깎아서 만듭니다.
-                newBody = Bodies.fromVertices(ghost.x, ghost.y, [config.vertices]);
-            }
-        } else {
-            // 이미지가 없으면 그냥 사각형 박스로 대응
-            newBody = Bodies.rectangle(ghost.x, ghost.y, 100, 100);
-        }
+    <script>
+        const { Engine, World, Bodies, Composite, Body, Vertices } = Matter;
+        const engine = Engine.create();
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
         
-        // ... (나머지 설정 및 추가 로직)
-    }
-});
+        canvas.width = 800;
+        canvas.height = 720;
+        engine.gravity.y = 1.3;
+
+        // --- 1. 블록 설정 (물리 범위 정밀 수정) ---
+        const blockConfigs = {
+            "Square": {
+                vertices: [{x:-40, y:-40}, {x:40, y:-40}, {x:40, y:40}, {x:-40, y:40}],
+                image: "images/9aff562fdf575bcacbea3cd3330c576e (3).png",
+                color: "#4CAF50", w: 80, h: 80
+            },
+            "Diamond": {
+                vertices: [{x:0, y:-50}, {x:50, y:0}, {x:0, y:50}, {x:-50, y:0}],
+                image: "images/9aff562fdf575bcacbea3cd3330c576e.png",
+                color: "#2196F3", w: 100, h: 100
+            },
+            "L_Shape": {
+                // ㄴ자 모양을 위해 두 개의 사각형을 조합
+                parts: [
+                    { x: 0, y: 20, w: 80, h: 40 }, 
+                    { x: -20, y: -20, w: 40, h: 40 }
+                ],
+                image: "images/63a1aff59ec47d0b600ea81c51125b1d (1).png",
+                color: "#FF9800", w: 100, h: 100
+            }
+        };
+
+        const imageCache = {};
+        function getImg(path) {
+            if (!imageCache[path]) {
+                const img = new Image();
+                img.src = path;
+                imageCache[path] = img;
+            }
+            return imageCache[path];
+        }
+
+        const groundWidth = 350;
+        const ground = Bodies.rectangle(400, 690, groundWidth, 30, { isStatic: true, friction: 1.0 });
+        Composite.add(engine.world, ground);
+
+        let blocks = [];
+        let score = 0;
+        let currentRank = "Rookie";
+        let ghost = { x: 400, y: 80, angle: 0, type: "Square" };
+        let gameOver = false;
+        let canDrop = true;
+
+        function updateRank() {
+            if (score >= 20) currentRank = "🥇 God of Stack";
+            else if (score >= 15) currentRank = "🏆 Grand Master";
+            else if (score >= 10) currentRank = "💎 Architect";
+            else if (score >= 5) currentRank = "🛠️ Builder";
+            else currentRank = "Rookie";
+            document.getElementById('rank').innerText = currentRank;
+        }
+
+        window.addEventListener('mousemove', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            ghost.x = (e.clientX - rect.left) * (canvas.width / rect.width);
+        });
+
+        window.addEventListener('keydown', (e) => {
+            if (e.key.toLowerCase() === 'a') ghost.angle += 0.5;
+            // ⭐ 재시작 로직: 페이지 새로고침
+            if (e.key.toLowerCase() === 'r') location.reload();
+        });
+
+        window.addEventListener('mousedown', () => {
+            if (!canDrop || gameOver) return;
+            
+            const conf = blockConfigs[ghost.type];
+            const img = getImg(conf.image);
+            const isLoaded = img.complete && img.naturalWidth !== 0;
+
+            let newBody;
+            if (isLoaded) {
+                if (ghost.type === "L_Shape") {
+                    const p1 = Bodies.rectangle(ghost.x + conf.parts[0].x, ghost.y + conf.parts[0].y, conf.parts[0].w, conf.parts[0].h);
+                    const p2 = Bodies.rectangle(ghost.x + conf.parts[1].x, ghost.y + conf.parts[1].y, conf.parts[1].w, conf.parts[1].h);
+                    newBody = Body.create({ parts: [p1, p2] });
+                } else {
+                    newBody = Bodies.fromVertices(ghost.x, ghost.y, [conf.vertices]);
+                }
+            } else {
+                newBody = Bodies.rectangle(ghost.x, ghost.y, 80, 80);
+            }
+
+            Body.setAngle(newBody, ghost.angle);
+            newBody.customType = ghost.type;
+            newBody.friction = 0.8;
+            
+            blocks.push(newBody);
+            Composite.add(engine.world, newBody);
+            
+            score++;
+            document.getElementById('score').innerText = score;
+            updateRank();
+            
+            canDrop = false;
+            setTimeout(() => {
+                const types = Object.keys(blockConfigs);
+                ghost.type = types[Math.floor(Math.random() * types.length)];
+                ghost.angle = 0;
+                canDrop = true;
+            }, 1000);
+        });
+
+        function draw() {
+            Engine.update(engine);
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // 바닥
+            ctx.fillStyle = "#333";
+            ctx.fillRect(400 - (groundWidth/2), 675, groundWidth, 30);
+
+            // 블록 그리기
+            blocks.forEach(body => {
+                const conf = blockConfigs[body.customType];
+                const img = getImg(conf.image);
+                
+                ctx.save();
+                ctx.translate(body.position.x, body.position.y);
+                ctx.rotate(body.angle);
+                
+                if (img.complete && img.naturalWidth !== 0) {
+                    // 투명 배경 이미지를 물체 크기에 맞게 그림
+                    ctx.drawImage(img, -conf.w/2, -conf.h/2, conf.w, conf.h);
+                } else {
+                    ctx.fillStyle = conf.color;
+                    ctx.globalAlpha = 0.7;
+                    ctx.fillRect(-40, -40, 80, 80);
+                }
+                ctx.restore();
+
+                if (body.position.y > 850) gameOver = true;
+            });
+
+            // 미리보기
+            if (canDrop && !gameOver) {
+                const conf = blockConfigs[ghost.type];
+                const img = getImg(conf.image);
+                ctx.save();
+                ctx.globalAlpha = 0.4;
+                ctx.translate(ghost.x, ghost.y);
+                ctx.rotate(ghost.angle);
+                if (img.complete && img.naturalWidth !== 0) {
+                    ctx.drawImage(img, -conf.w/2, -conf.h/2, conf.w, conf.h);
+                } else {
+                    ctx.fillStyle = "gray";
+                    ctx.fillRect(-40, -40, 80, 80);
+                }
+                ctx.restore();
+            }
+
+            if (gameOver) {
+                ctx.fillStyle = "rgba(0,0,0,0.85)";
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                ctx.fillStyle = "#ff4444";
+                ctx.textAlign = "center";
+                ctx.font = "bold 60px Arial";
+                ctx.fillText("GAME OVER", 400, 300);
+                ctx.fillStyle = "white";
+                ctx.font = "30px Arial";
+                ctx.fillText("Score: " + score + " | " + currentRank, 400, 370);
+                ctx.font = "20px Arial";
+                ctx.fillText("Press 'R' to Restart", 400, 450);
+            }
+            requestAnimationFrame(draw);
+        }
+        draw();
+    </script>
+</body>
+</html>
