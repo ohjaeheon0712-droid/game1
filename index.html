@@ -5,17 +5,16 @@
     <title>High-Stack Challenge</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"></script>
     <style>
-        body { margin: 0; background: #1a1a1a; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; color: white; overflow: hidden; font-family: 'Malgun Gothic', sans-serif; }
-        canvas { background: #fff; border: 5px solid #444; box-shadow: 0 0 20px rgba(0,0,0,0.5); }
+        body { margin: 0; background: #1a1a1a; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; color: white; overflow: hidden; font-family: sans-serif; }
+        canvas { background: #fff; border: 5px solid #444; box-shadow: 0 0 20px rgba(0,0,0,0.5); cursor: crosshair; }
         #ui { position: absolute; top: 20px; left: 20px; pointer-events: none; }
-        .info { color: #aaa; font-size: 0.9em; }
     </style>
 </head>
 <body>
     <div id="ui">
         <h1 id="score" style="margin:0; color:#00ff88;">Blocks: 0</h1>
         <p id="rank" style="margin:5px 0;">Rank: Rookie</p>
-        <div class="info">[A] 회전 | [클릭] 낙하 | [R] 재시작</div>
+        <div style="color: #aaa; font-size: 0.9em;">[A] 회전 | [클릭] 낙하 | [R] 재시작</div>
     </div>
     <canvas id="gameCanvas"></canvas>
 
@@ -25,29 +24,26 @@
         const canvas = document.getElementById('gameCanvas');
         const ctx = canvas.getContext('2d');
         canvas.width = 600;
-        canvas.height = 700;
+        canvas.height = 750;
 
-        // --- 설정: 알려주신 이미지 3개만 사용 ---
+        // 이미지 설정 (파일명 정확히 일치 확인!)
         const configs = {
             "Square": {
                 img: "images/9aff562fdf575bcacbea3cd3330c576e (3).png",
-                color: "#4CAF50",
-                width: 80, height: 80
+                color: "#4CAF50", w: 80, h: 80
             },
             "Diamond": {
                 img: "images/9aff562fdf575bcacbea3cd3330c576e.png",
-                color: "#2196F3",
-                width: 90, height: 90
+                color: "#2196F3", w: 90, h: 90
             },
             "L_Shape": {
                 img: "images/63a1aff59ec47d0b600ea81c51125b1d (1).png",
-                color: "#FF9800",
-                width: 100, height: 100
+                color: "#FF9800", w: 100, h: 100
             }
         };
 
         const imageCache = {};
-        function loadImg(path) {
+        function getImg(path) {
             if (!imageCache[path]) {
                 const img = new Image();
                 img.src = path;
@@ -56,8 +52,9 @@
             return imageCache[path];
         }
 
-        // 바닥 (200px 길이)
-        const ground = Bodies.rectangle(300, 680, 200, 40, { isStatic: true, friction: 1 });
+        // 바닥 생성 (길이를 350으로 늘림)
+        const groundWidth = 350;
+        const ground = Bodies.rectangle(300, 700, groundWidth, 40, { isStatic: true, friction: 1 });
         Composite.add(engine.world, ground);
 
         let blocks = [];
@@ -66,16 +63,14 @@
         let gameOver = false;
         let canDrop = true;
 
-        // 입력 처리
         window.addEventListener('mousemove', (e) => {
             const rect = canvas.getBoundingClientRect();
-            ghost.x = e.clientX - rect.left;
+            ghost.x = (e.clientX - rect.left) * (canvas.width / rect.width);
         });
 
         window.addEventListener('keydown', (e) => {
-            const key = e.key.toLowerCase();
-            if (key === 'a') ghost.angle += 0.4;
-            if (key === 'r' && gameOver) location.reload();
+            if (e.key.toLowerCase() === 'a') ghost.angle += 0.4;
+            if (e.key.toLowerCase() === 'r' && gameOver) location.reload();
         });
 
         window.addEventListener('mousedown', () => {
@@ -85,12 +80,11 @@
             let newBlock;
 
             if (ghost.type === "L_Shape") {
-                // L자 모양 물리 구조
                 const p1 = Bodies.rectangle(ghost.x, ghost.y + 20, 100, 40);
                 const p2 = Bodies.rectangle(ghost.x - 30, ghost.y - 20, 40, 40);
                 newBlock = Body.create({ parts: [p1, p2] });
             } else {
-                newBlock = Bodies.rectangle(ghost.x, ghost.y, conf.width, conf.height);
+                newBlock = Bodies.rectangle(ghost.x, ghost.y, conf.w, conf.h);
             }
 
             Body.setAngle(newBlock, ghost.angle);
@@ -102,78 +96,73 @@
             
             score++;
             document.getElementById('score').innerText = "Blocks: " + score;
-            updateRank();
-
-            // 다음 블록 준비 대기시간
+            
             canDrop = false;
             setTimeout(() => {
                 const types = Object.keys(configs);
                 ghost.type = types[Math.floor(Math.random() * types.length)];
                 ghost.angle = 0;
                 canDrop = true;
-            }, 1000);
+            }, 1200);
         });
-
-        function updateRank() {
-            let rank = "Rookie";
-            if (score >= 10) rank = "Architect";
-            else if (score >= 5) rank = "Builder";
-            document.getElementById('rank').innerText = "Rank: " + rank;
-        }
 
         function update() {
             Engine.update(engine);
             ctx.clearRect(0, 0, canvas.width, canvas.height);
 
             // 바닥 그리기
-            ctx.fillStyle = "#333";
-            ctx.fillRect(300 - 100, 660, 200, 40);
+            ctx.fillStyle = "#444";
+            ctx.fillRect(300 - (groundWidth/2), 680, groundWidth, 40);
 
-            // 쌓인 블록 그리기
+            // 블록들 그리기 및 게임 오버 체크
             blocks.forEach(body => {
                 const conf = configs[body.customType];
-                const img = loadImg(conf.img);
+                const img = getImg(conf.img);
                 
                 ctx.save();
                 ctx.translate(body.position.x, body.position.y);
                 ctx.rotate(body.angle);
                 
                 if (img.complete && img.naturalWidth !== 0) {
-                    ctx.drawImage(img, -conf.width/2, -conf.height/2, conf.width, conf.height);
+                    ctx.drawImage(img, -conf.w/2, -conf.h/2, conf.w, conf.h);
                 } else {
                     ctx.fillStyle = conf.color;
-                    ctx.globalAlpha = 0.6;
-                    ctx.fillRect(-conf.width/2, -conf.height/2, conf.width, conf.height);
+                    ctx.globalAlpha = 0.7;
+                    ctx.fillRect(-conf.w/2, -conf.h/2, conf.w, conf.h);
                 }
                 ctx.restore();
 
-                if (body.position.y > 750) gameOver = true;
+                // 화면 아래로 떨어지면 게임 오버!
+                if (body.position.y > canvas.height + 50) {
+                    gameOver = true;
+                }
             });
 
             // 미리보기 (Ghost)
             if (canDrop && !gameOver) {
                 const conf = configs[ghost.type];
-                const img = loadImg(conf.img);
+                const img = getImg(conf.img);
                 ctx.save();
                 ctx.globalAlpha = 0.4;
                 ctx.translate(ghost.x, ghost.y);
                 ctx.rotate(ghost.angle);
                 if (img.complete && img.naturalWidth !== 0) {
-                    ctx.drawImage(img, -conf.width/2, -conf.height/2, conf.width, conf.height);
+                    ctx.drawImage(img, -conf.w/2, -conf.h/2, conf.w, conf.h);
                 } else {
                     ctx.fillStyle = "gray";
-                    ctx.fillRect(-conf.width/2, -conf.height/2, conf.width, conf.height);
+                    ctx.fillRect(-conf.w/2, -conf.h/2, conf.w, conf.h);
                 }
                 ctx.restore();
             }
 
             if (gameOver) {
-                ctx.fillStyle = "rgba(0,0,0,0.8)";
+                ctx.fillStyle = "rgba(0,0,0,0.85)";
                 ctx.fillRect(0, 0, canvas.width, canvas.height);
-                ctx.fillStyle = "white";
+                ctx.fillStyle = "#ff4444";
                 ctx.textAlign = "center";
-                ctx.font = "40px Arial";
+                ctx.font = "bold 50px Arial";
                 ctx.fillText("GAME OVER", 300, 350);
+                ctx.fillStyle = "white";
                 ctx.font = "20px Arial";
                 ctx.fillText("Press 'R' to Restart", 300, 400);
             }
