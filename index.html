@@ -2,56 +2,52 @@
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <title>High-Stack Challenge: Perfect Edition</title>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/poly-decomp.js/0.3.0/decomp.min.js"></script>
+    <title>High-Stack: Precision Edition</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"></script>
     <style>
-        body { margin: 0; padding: 0; overflow: hidden; background: #1a1a1a; display: flex; justify-content: center; align-items: center; height: 100vh; font-family: 'Malgun Gothic', sans-serif; }
-        #ui { position: absolute; top: 20px; left: 20px; color: white; pointer-events: none; z-index: 10; background: rgba(0,0,0,0.6); padding: 20px; border-radius: 12px; border: 1px solid #444; }
-        canvas { background: white; border: 5px solid #333; box-shadow: 0 0 50px rgba(0,0,0,0.5); }
-        #rank { color: #ffeb3b; font-weight: bold; }
-        #score { color: #00ff88; font-weight: bold; }
+        body { margin: 0; background: #1a1a1a; display: flex; justify-content: center; align-items: center; height: 100vh; overflow: hidden; font-family: sans-serif; }
+        #ui { position: absolute; top: 20px; left: 20px; color: white; pointer-events: none; z-index: 10; background: rgba(0,0,0,0.7); padding: 15px; border-radius: 10px; }
+        canvas { background: white; border: 4px solid #333; box-shadow: 0 0 40px rgba(0,0,0,0.5); }
     </style>
 </head>
 <body>
     <div id="ui">
-        <h1 style="margin:0;">Blocks: <span id="score">0</span></h1>
-        <p style="margin:10px 0;">Rank: <span id="rank">Rookie</span></p>
-        <p style="font-size: 0.85em; color: #ccc;">[A] Rotate | [Click] Drop | [R] Restart</p>
+        <h1 id="score" style="margin:0; color:#00ff88;">Score: 0</h1>
+        <p id="rank" style="margin:5px 0; color:#ffeb3b;">Rank: Rookie</p>
+        <div style="font-size: 0.8em; color: #ccc;">[A] 회전 | [R] 재시작 | <b>빨간선 = 실제 충돌 범위</b></div>
     </div>
-
     <canvas id="gameCanvas"></canvas>
 
     <script>
-        const { Engine, World, Bodies, Composite, Body, Vertices } = Matter;
+        const { Engine, World, Bodies, Composite, Body } = Matter;
         const engine = Engine.create();
         const canvas = document.getElementById('gameCanvas');
         const ctx = canvas.getContext('2d');
-        
         canvas.width = 800;
-        canvas.height = 720;
-        engine.gravity.y = 1.3;
+        canvas.height = 750;
 
-        // --- 1. 블록 설정 (물리 범위 정밀 수정) ---
-        const blockConfigs = {
+        // --- [핵심] 각 이미지의 물리 범위를 이미지 크기에 정밀하게 맞춤 ---
+        const configs = {
             "Square": {
-                vertices: [{x:-40, y:-40}, {x:40, y:-40}, {x:40, y:40}, {x:-40, y:40}],
-                image: "images/9aff562fdf575bcacbea3cd3330c576e (3).png",
-                color: "#4CAF50", w: 80, h: 80
+                img: "images/9aff562fdf575bcacbea3cd3330c576e (3).png",
+                w: 80, h: 80,
+                create: (x, y) => Bodies.rectangle(x, y, 80, 80, { friction: 0.5 })
             },
             "Diamond": {
-                vertices: [{x:0, y:-50}, {x:50, y:0}, {x:0, y:50}, {x:-50, y:0}],
-                image: "images/9aff562fdf575bcacbea3cd3330c576e.png",
-                color: "#2196F3", w: 100, h: 100
+                img: "images/9aff562fdf575bcacbea3cd3330c576e.png",
+                w: 100, h: 100,
+                // 마름모는 사각형을 45도 회전시킨 것이 아니라 4개의 점으로 정밀 정의
+                create: (x, y) => Bodies.fromVertices(x, y, [{x:0, y:-50}, {x:50, y:0}, {x:0, y:50}, {x:-50, y:0}], { friction: 0.5 })
             },
             "L_Shape": {
-                // ㄴ자 모양을 위해 두 개의 사각형을 조합
-                parts: [
-                    { x: 0, y: 20, w: 80, h: 40 }, 
-                    { x: -20, y: -20, w: 40, h: 40 }
-                ],
-                image: "images/63a1aff59ec47d0b600ea81c51125b1d (1).png",
-                color: "#FF9800", w: 100, h: 100
+                img: "images/63a1aff59ec47d0b600ea81c51125b1d (1).png",
+                w: 100, h: 100,
+                // ⭐ 오목한 공간(ㄴ)을 인식하도록 두 개의 사각형 파츠로 결합 ⭐
+                create: (x, y) => {
+                    const p1 = Bodies.rectangle(x, y + 25, 100, 50); // 가로판
+                    const p2 = Bodies.rectangle(x - 25, y - 25, 50, 50); // 세로 기둥
+                    return Body.create({ parts: [p1, p2], friction: 0.5 });
+                }
             }
         };
 
@@ -65,25 +61,14 @@
             return imageCache[path];
         }
 
-        const groundWidth = 350;
-        const ground = Bodies.rectangle(400, 690, groundWidth, 30, { isStatic: true, friction: 1.0 });
+        const ground = Bodies.rectangle(400, 720, 350, 40, { isStatic: true });
         Composite.add(engine.world, ground);
 
         let blocks = [];
         let score = 0;
-        let currentRank = "Rookie";
-        let ghost = { x: 400, y: 80, angle: 0, type: "Square" };
+        let ghost = { x: 400, y: 100, angle: 0, type: "Square" };
         let gameOver = false;
         let canDrop = true;
-
-        function updateRank() {
-            if (score >= 20) currentRank = "🥇 God of Stack";
-            else if (score >= 15) currentRank = "🏆 Grand Master";
-            else if (score >= 10) currentRank = "💎 Architect";
-            else if (score >= 5) currentRank = "🛠️ Builder";
-            else currentRank = "Rookie";
-            document.getElementById('rank').innerText = currentRank;
-        }
 
         window.addEventListener('mousemove', (e) => {
             const rect = canvas.getBoundingClientRect();
@@ -91,45 +76,27 @@
         });
 
         window.addEventListener('keydown', (e) => {
-            if (e.key.toLowerCase() === 'a') ghost.angle += 0.5;
-            // ⭐ 재시작 로직: 페이지 새로고침
+            if (e.key.toLowerCase() === 'a') ghost.angle += 0.4;
             if (e.key.toLowerCase() === 'r') location.reload();
         });
 
         window.addEventListener('mousedown', () => {
             if (!canDrop || gameOver) return;
             
-            const conf = blockConfigs[ghost.type];
-            const img = getImg(conf.image);
-            const isLoaded = img.complete && img.naturalWidth !== 0;
-
-            let newBody;
-            if (isLoaded) {
-                if (ghost.type === "L_Shape") {
-                    const p1 = Bodies.rectangle(ghost.x + conf.parts[0].x, ghost.y + conf.parts[0].y, conf.parts[0].w, conf.parts[0].h);
-                    const p2 = Bodies.rectangle(ghost.x + conf.parts[1].x, ghost.y + conf.parts[1].y, conf.parts[1].w, conf.parts[1].h);
-                    newBody = Body.create({ parts: [p1, p2] });
-                } else {
-                    newBody = Bodies.fromVertices(ghost.x, ghost.y, [conf.vertices]);
-                }
-            } else {
-                newBody = Bodies.rectangle(ghost.x, ghost.y, 80, 80);
-            }
-
-            Body.setAngle(newBody, ghost.angle);
-            newBody.customType = ghost.type;
-            newBody.friction = 0.8;
+            const conf = configs[ghost.type];
+            const newBlock = conf.create(ghost.x, ghost.y);
+            Body.setAngle(newBlock, ghost.angle);
+            newBlock.customType = ghost.type;
             
-            blocks.push(newBody);
-            Composite.add(engine.world, newBody);
+            blocks.push(newBlock);
+            Composite.add(engine.world, newBlock);
             
             score++;
-            document.getElementById('score').innerText = score;
-            updateRank();
+            document.getElementById('score').innerText = "Score: " + score;
             
             canDrop = false;
             setTimeout(() => {
-                const types = Object.keys(blockConfigs);
+                const types = Object.keys(configs);
                 ghost.type = types[Math.floor(Math.random() * types.length)];
                 ghost.angle = 0;
                 canDrop = true;
@@ -141,60 +108,61 @@
             ctx.clearRect(0, 0, canvas.width, canvas.height);
 
             // 바닥
-            ctx.fillStyle = "#333";
-            ctx.fillRect(400 - (groundWidth/2), 675, groundWidth, 30);
+            ctx.fillStyle = "#444";
+            ctx.fillRect(400 - 175, 700, 350, 40);
 
-            // 블록 그리기
             blocks.forEach(body => {
-                const conf = blockConfigs[body.customType];
-                const img = getImg(conf.image);
-                
+                const conf = configs[body.customType];
+                const img = getImg(conf.img);
+
                 ctx.save();
                 ctx.translate(body.position.x, body.position.y);
                 ctx.rotate(body.angle);
-                
+
+                // 1. 이미지 그리기
                 if (img.complete && img.naturalWidth !== 0) {
-                    // 투명 배경 이미지를 물체 크기에 맞게 그림
                     ctx.drawImage(img, -conf.w/2, -conf.h/2, conf.w, conf.h);
                 } else {
-                    ctx.fillStyle = conf.color;
-                    ctx.globalAlpha = 0.7;
-                    ctx.fillRect(-40, -40, 80, 80);
+                    ctx.fillStyle = "#ddd";
+                    ctx.fillRect(-conf.w/2, -conf.h/2, conf.w, conf.h);
                 }
                 ctx.restore();
+
+                // 2. [정밀 확인용] 물리 엔진이 인식하는 실제 선 그리기 (빨간선)
+                ctx.beginPath();
+                body.vertices.forEach((v, i) => {
+                    if (i === 0) ctx.moveTo(v.x, v.y);
+                    else ctx.lineTo(v.x, v.y);
+                });
+                ctx.closePath();
+                ctx.strokeStyle = "red";
+                ctx.lineWidth = 2;
+                ctx.stroke();
 
                 if (body.position.y > 850) gameOver = true;
             });
 
-            // 미리보기
+            // 미리보기 (Ghost)
             if (canDrop && !gameOver) {
-                const conf = blockConfigs[ghost.type];
-                const img = getImg(conf.image);
+                const conf = configs[ghost.type];
                 ctx.save();
-                ctx.globalAlpha = 0.4;
+                ctx.globalAlpha = 0.5;
                 ctx.translate(ghost.x, ghost.y);
                 ctx.rotate(ghost.angle);
-                if (img.complete && img.naturalWidth !== 0) {
-                    ctx.drawImage(img, -conf.w/2, -conf.h/2, conf.w, conf.h);
-                } else {
-                    ctx.fillStyle = "gray";
-                    ctx.fillRect(-40, -40, 80, 80);
-                }
+                const img = getImg(conf.img);
+                if (img.complete) ctx.drawImage(img, -conf.w/2, -conf.h/2, conf.w, conf.h);
                 ctx.restore();
             }
 
             if (gameOver) {
-                ctx.fillStyle = "rgba(0,0,0,0.85)";
+                ctx.fillStyle = "rgba(0,0,0,0.8)";
                 ctx.fillRect(0, 0, canvas.width, canvas.height);
-                ctx.fillStyle = "#ff4444";
-                ctx.textAlign = "center";
-                ctx.font = "bold 60px Arial";
-                ctx.fillText("GAME OVER", 400, 300);
                 ctx.fillStyle = "white";
-                ctx.font = "30px Arial";
-                ctx.fillText("Score: " + score + " | " + currentRank, 400, 370);
+                ctx.textAlign = "center";
+                ctx.font = "bold 50px Arial";
+                ctx.fillText("GAME OVER", 400, 350);
                 ctx.font = "20px Arial";
-                ctx.fillText("Press 'R' to Restart", 400, 450);
+                ctx.fillText("Press 'R' to Restart", 400, 410);
             }
             requestAnimationFrame(draw);
         }
