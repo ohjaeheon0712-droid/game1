@@ -2,73 +2,103 @@
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <title>High-Stack: Precision Edition</title>
+    <title>High-Stack: Auto-Trace Physics</title>
+    <script src="https://cdn.jsdelivr.net/npm/poly-decomp@0.3.0/build/decomp.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"></script>
     <style>
-        body { margin: 0; background: #1a1a1a; display: flex; justify-content: center; align-items: center; height: 100vh; overflow: hidden; font-family: sans-serif; }
-        #ui { position: absolute; top: 20px; left: 20px; color: white; pointer-events: none; z-index: 10; background: rgba(0,0,0,0.7); padding: 15px; border-radius: 10px; }
-        canvas { background: white; border: 4px solid #333; box-shadow: 0 0 40px rgba(0,0,0,0.5); }
+        body { margin: 0; background: #1a1a1a; display: flex; justify-content: center; align-items: center; height: 100vh; overflow: hidden; font-family: 'Malgun Gothic', sans-serif; color: white; }
+        #ui { position: absolute; top: 20px; left: 20px; pointer-events: none; z-index: 10; background: rgba(0,0,0,0.6); padding: 20px; border-radius: 12px; }
+        canvas { background: #fff; border: 4px solid #333; box-shadow: 0 0 50px rgba(0,0,0,0.5); }
+        #score { color: #00ff88; font-weight: bold; }
+        #loading-msg { color: #ffeb3b; font-weight: bold; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-size: 2em; z-index: 100; pointer-events: none; }
     </style>
 </head>
 <body>
+    <div id="loading-msg">이미지 분석 중... 잠시만 기다려주세요.</div>
     <div id="ui">
-        <h1 id="score" style="margin:0; color:#00ff88;">Score: 0</h1>
-        <p id="rank" style="margin:5px 0; color:#ffeb3b;">Rank: Rookie</p>
-        <div style="font-size: 0.8em; color: #ccc;">[A] 회전 | [R] 재시작 | <b>빨간선 = 실제 충돌 범위</b></div>
+        <h1 style="margin:0;">Blocks: <span id="score">0</span></h1>
+        <p style="font-size: 0.85em; color: #ccc;">[A] Rotate | [Click] Drop | [R] Restart</p>
+        <p style="font-size: 0.8em; color: #ff5555;">빨간선 = 실제 물리 외곽선</p>
     </div>
     <canvas id="gameCanvas"></canvas>
 
     <script>
-        const { Engine, World, Bodies, Composite, Body } = Matter;
+        const { Engine, World, Bodies, Composite, Body, Common, Vertices } = Matter;
+        Common.setDecomp(decomp); // Matter.js에 decomp 라이브러리 연결
+
         const engine = Engine.create();
         const canvas = document.getElementById('gameCanvas');
         const ctx = canvas.getContext('2d');
         canvas.width = 800;
-        canvas.height = 750;
+        canvas.height = 720;
+        engine.gravity.y = 1.3;
 
-        // --- [핵심] 각 이미지의 물리 범위를 이미지 크기에 정밀하게 맞춤 ---
-        const configs = {
-            "Square": {
-                img: "images/9aff562fdf575bcacbea3cd3330c576e (3).png",
-                w: 80, h: 80,
-                create: (x, y) => Bodies.rectangle(x, y, 80, 80, { friction: 0.5 })
-            },
-            "Diamond": {
-                img: "images/9aff562fdf575bcacbea3cd3330c576e.png",
-                w: 100, h: 100,
-                // 마름모는 사각형을 45도 회전시킨 것이 아니라 4개의 점으로 정밀 정의
-                create: (x, y) => Bodies.fromVertices(x, y, [{x:0, y:-50}, {x:50, y:0}, {x:0, y:50}, {x:-50, y:0}], { friction: 0.5 })
-            },
-            "L_Shape": {
-                img: "images/63a1aff59ec47d0b600ea81c51125b1d (1).png",
-                w: 100, h: 100,
-                // ⭐ 오목한 공간(ㄴ)을 인식하도록 두 개의 사각형 파츠로 결합 ⭐
-                create: (x, y) => {
-                    const p1 = Bodies.rectangle(x, y + 25, 100, 50); // 가로판
-                    const p2 = Bodies.rectangle(x - 25, y - 25, 50, 50); // 세로 기둥
-                    return Body.create({ parts: [p1, p2], friction: 0.5 });
+        // ==========================================
+        // ⭐ 핵심 기술: 이미지에서 외곽선 추출하는 함수 ⭐
+        // ==========================================
+        function extractVerticesFromImage(img, sampleStep = 4) {
+            const tempCanvas = document.createElement('canvas');
+            tempCanvas.width = img.width;
+            tempCanvas.height = img.height;
+            const tempCtx = tempCanvas.getContext('2d');
+            tempCtx.drawImage(img, 0, 0);
+
+            const imageData = tempCtx.getImageData(0, 0, img.width, img.height).data;
+            let points = [];
+
+            // 간단한 방식: 투명하지 않은 픽셀을 일정 간격으로 수집
+            for (let y = 0; y < img.height; y += sampleStep) {
+                for (let x = 0; x < img.width; x += sampleStep) {
+                    const alpha = imageData[(y * img.width + x) * 4 + 3];
+                    if (alpha > 50) { // 투명도가 일정 이상인 픽셀만 감지
+                        points.push({ x: x, y: y });
+                    }
                 }
             }
+            // 수집된 점들을 감싸는 외곽선(Convex Hull) 생성 후 최적화
+            const hull = Vertices.hull(points);
+            const center = Vertices.centre(hull);
+            // 중심점을 기준으로 좌표 재조정
+            return hull.map(p => ({ x: p.x - center.x, y: p.y - center.y }));
+        }
+        // ==========================================
+
+        const configs = {
+            "Type1": { path: "images/9aff562fdf575bcacbea3cd3330c576e (3).png", loaded: false },
+            "Type2": { path: "images/9aff562fdf575bcacbea3cd3330c576e.png", loaded: false },
+            "Type3": { path: "images/63a1aff59ec47d0b600ea81c51125b1d (1).png", loaded: false }
         };
 
-        const imageCache = {};
-        function getImg(path) {
-            if (!imageCache[path]) {
-                const img = new Image();
-                img.src = path;
-                imageCache[path] = img;
-            }
-            return imageCache[path];
-        }
-
-        const ground = Bodies.rectangle(400, 720, 350, 40, { isStatic: true });
+        const ground = Bodies.rectangle(400, 690, 400, 30, { isStatic: true, friction: 1.0 });
         Composite.add(engine.world, ground);
 
         let blocks = [];
         let score = 0;
-        let ghost = { x: 400, y: 100, angle: 0, type: "Square" };
+        let ghost = { x: 400, y: 100, angle: 0, type: "Type1" };
         let gameOver = false;
-        let canDrop = true;
+        let canDrop = false; // 이미지 로딩 전까지 클릭 방지
+        let loadedCount = 0;
+
+        // 이미지 미리 로드 및 분석 시작
+        Object.keys(configs).forEach(key => {
+            const img = new Image();
+            img.src = configs[key].path;
+            img.onload = () => {
+                console.log(`${key} 이미지 분석 완료`);
+                // 이미지 로드 후 즉시 외곽선 추출하여 저장
+                configs[key].vertices = extractVerticesFromImage(img);
+                configs[key].imgElem = img;
+                configs[key].w = img.width;
+                configs[key].h = img.height;
+                configs[key].loaded = true;
+                loadedCount++;
+                // 3장 모두 분석 끝나면 게임 시작
+                if (loadedCount === 3) {
+                    document.getElementById('loading-msg').style.display = 'none';
+                    canDrop = true;
+                }
+            };
+        });
 
         window.addEventListener('mousemove', (e) => {
             const rect = canvas.getBoundingClientRect();
@@ -76,7 +106,7 @@
         });
 
         window.addEventListener('keydown', (e) => {
-            if (e.key.toLowerCase() === 'a') ghost.angle += 0.4;
+            if (e.key.toLowerCase() === 'a') ghost.angle += 0.5;
             if (e.key.toLowerCase() === 'r') location.reload();
         });
 
@@ -84,23 +114,28 @@
             if (!canDrop || gameOver) return;
             
             const conf = configs[ghost.type];
-            const newBlock = conf.create(ghost.x, ghost.y);
-            Body.setAngle(newBlock, ghost.angle);
-            newBlock.customType = ghost.type;
-            
-            blocks.push(newBlock);
-            Composite.add(engine.world, newBlock);
-            
-            score++;
-            document.getElementById('score').innerText = "Score: " + score;
-            
-            canDrop = false;
-            setTimeout(() => {
-                const types = Object.keys(configs);
-                ghost.type = types[Math.floor(Math.random() * types.length)];
-                ghost.angle = 0;
-                canDrop = true;
-            }, 1000);
+            // 추출된 외곽선(vertices)으로 물리 바디 생성
+            // poly-decomp가 있어서 복잡한 모양도 가능
+            const newBody = Bodies.fromVertices(ghost.x, ghost.y, conf.vertices, {
+                friction: 0.8,
+                restitution: 0.1
+            });
+
+            if (newBody) {
+                Body.setAngle(newBody, ghost.angle);
+                newBody.customType = ghost.type;
+                blocks.push(newBody);
+                Composite.add(engine.world, newBody);
+                score++;
+                document.getElementById('score').innerText = score;
+                canDrop = false;
+                setTimeout(() => {
+                    const types = Object.keys(configs);
+                    ghost.type = types[Math.floor(Math.random() * types.length)];
+                    ghost.angle = 0;
+                    canDrop = true;
+                }, 1000);
+            }
         });
 
         function draw() {
@@ -109,32 +144,28 @@
 
             // 바닥
             ctx.fillStyle = "#444";
-            ctx.fillRect(400 - 175, 700, 350, 40);
+            ctx.fillRect(400 - 200, 675, 400, 30);
 
             blocks.forEach(body => {
                 const conf = configs[body.customType];
-                const img = getImg(conf.img);
-
                 ctx.save();
                 ctx.translate(body.position.x, body.position.y);
                 ctx.rotate(body.angle);
-
-                // 1. 이미지 그리기
-                if (img.complete && img.naturalWidth !== 0) {
-                    ctx.drawImage(img, -conf.w/2, -conf.h/2, conf.w, conf.h);
-                } else {
-                    ctx.fillStyle = "#ddd";
-                    ctx.fillRect(-conf.w/2, -conf.h/2, conf.w, conf.h);
-                }
+                // 이미지 그리기 (중심점 기준)
+                ctx.drawImage(conf.imgElem, -conf.w/2, -conf.h/2);
                 ctx.restore();
 
-                // 2. [정밀 확인용] 물리 엔진이 인식하는 실제 선 그리기 (빨간선)
+                // [디버그] 실제 물리 외곽선 빨간색으로 표시
                 ctx.beginPath();
-                body.vertices.forEach((v, i) => {
-                    if (i === 0) ctx.moveTo(v.x, v.y);
-                    else ctx.lineTo(v.x, v.y);
+                // 복잡한 도형은 여러개의 파츠로 나뉠 수 있음
+                const parts = body.parts.length > 1 ? body.parts.slice(1) : [body];
+                parts.forEach(part => {
+                    part.vertices.forEach((v, i) => {
+                        if (i === 0) ctx.moveTo(v.x, v.y);
+                        else ctx.lineTo(v.x, v.y);
+                    });
+                    ctx.closePath();
                 });
-                ctx.closePath();
                 ctx.strokeStyle = "red";
                 ctx.lineWidth = 2;
                 ctx.stroke();
@@ -142,27 +173,26 @@
                 if (body.position.y > 850) gameOver = true;
             });
 
-            // 미리보기 (Ghost)
-            if (canDrop && !gameOver) {
+            // 미리보기
+            if (canDrop && !gameOver && configs[ghost.type].loaded) {
                 const conf = configs[ghost.type];
                 ctx.save();
                 ctx.globalAlpha = 0.5;
                 ctx.translate(ghost.x, ghost.y);
                 ctx.rotate(ghost.angle);
-                const img = getImg(conf.img);
-                if (img.complete) ctx.drawImage(img, -conf.w/2, -conf.h/2, conf.w, conf.h);
+                ctx.drawImage(conf.imgElem, -conf.w/2, -conf.h/2);
                 ctx.restore();
             }
 
             if (gameOver) {
-                ctx.fillStyle = "rgba(0,0,0,0.8)";
+                ctx.fillStyle = "rgba(0,0,0,0.85)";
                 ctx.fillRect(0, 0, canvas.width, canvas.height);
                 ctx.fillStyle = "white";
                 ctx.textAlign = "center";
                 ctx.font = "bold 50px Arial";
                 ctx.fillText("GAME OVER", 400, 350);
                 ctx.font = "20px Arial";
-                ctx.fillText("Press 'R' to Restart", 400, 410);
+                ctx.fillText("Press 'R' to Restart", 400, 420);
             }
             requestAnimationFrame(draw);
         }
