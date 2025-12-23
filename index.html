@@ -2,170 +2,78 @@
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <title>High-Stack Challenge</title>
+    <title>High-Stack Test</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"></script>
     <style>
-        body { margin: 0; padding: 0; overflow: hidden; background: #222; display: flex; justify-content: center; align-items: center; height: 100vh; font-family: sans-serif; }
-        #ui { position: absolute; top: 20px; left: 20px; color: white; pointer-events: none; z-index: 10; text-shadow: 2px 2px 4px rgba(0,0,0,0.5); }
-        canvas { background: white; border: 5px solid #444; box-shadow: 0 0 30px rgba(0,0,0,0.5); }
+        body { margin: 0; background: #222; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; color: white; overflow: hidden; }
+        canvas { background: #fff; border: 5px solid #555; cursor: crosshair; }
+        #ui { position: absolute; top: 20px; left: 20px; pointer-events: none; }
     </style>
 </head>
 <body>
     <div id="ui">
         <h1 id="score">Blocks: 0</h1>
-        <p id="rank">Rank: Rookie</p>
-        <p>[A] Rotate | [Click] Drop | [R] Restart</p>
+        <p>화면을 클릭하면 상자가 떨어집니다!</p>
     </div>
-
     <canvas id="gameCanvas"></canvas>
 
     <script>
-        // --- 게임 설정 및 물리 엔진 초기화 ---
-        const { Engine, Render, Runner, Bodies, Composite, Body } = Matter;
-        const engine = Engine.create();
-        const world = engine.world;
-        engine.gravity.y = 1.3;
-
-        const canvas = document.getElementById('gameCanvas');
-        const ctx = canvas.getContext('2d');
-        canvas.width = 800;
-        canvas.height = 720;
-
-        // --- 알려주신 이미지 3개만 사용 ---
-        const blockConfigs = {
-            "Square": {
-                vertices: [{x:-50, y:-50}, {x:50, y:-50}, {x:50, y:50}, {x:-50, y:50}],
-                image: "images/9aff562fdf575bcacbea3cd3330c576e (3).png",
-                color: "#4CAF50"
-            },
-            "Diamond": {
-                vertices: [{x:0, y:-70}, {x:70, y:0}, {x:0, y:70}, {x:-70, y:0}],
-                image: "images/9aff562fdf575bcacbea3cd3330c576e.png",
-                color: "#2196F3"
-            },
-            "L_Shape": {
-                parts: [{x:0, y:25, w:100, h:50}, {x:-25, y:-25, w:50, h:50}],
-                image: "images/63a1aff59ec47d0b600ea81c51125b1d (1).png",
-                color: "#FF9800"
-            }
-        };
-
-        const imageCache = {};
-        function getImg(path) {
-            if (!imageCache[path]) {
-                const img = new Image();
-                img.src = path;
-                imageCache[path] = img;
-            }
-            return imageCache[path];
+        // 1. 엔진 초기화 확인
+        if (typeof Matter === 'undefined') {
+            alert("물리 엔진을 불러오지 못했습니다. 인터넷 연결을 확인해주세요.");
         }
 
-        // 바닥 생성 (짧은 바닥)
-        const groundWidth = 200;
-        const ground = Bodies.rectangle(400, 690, groundWidth, 20, { isStatic: true, friction: 1.0 });
-        Composite.add(world, ground);
+        const { Engine, World, Bodies, Composite, Body } = Matter;
+        const engine = Engine.create();
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        canvas.width = 600;
+        canvas.height = 700;
 
-        let ghost = { x: 400, y: 100, angle: 0, type: "Square" };
+        // 2. 바닥 생성 (짧고 굵게)
+        const ground = Bodies.rectangle(300, 680, 200, 40, { isStatic: true });
+        Composite.add(engine.world, ground);
+
         let blocks = [];
         let score = 0;
-        let gameOver = false;
-        let canCreate = true;
 
-        // 입력 이벤트
-        window.addEventListener('mousemove', (e) => {
+        // 3. 클릭 시 상자 생성
+        window.addEventListener('mousedown', (e) => {
             const rect = canvas.getBoundingClientRect();
-            ghost.x = (e.clientX - rect.left) * (canvas.width / rect.width);
+            const mouseX = e.clientX - rect.left;
+            
+            // 이미지 없이 단순한 빨간 상자 생성
+            const box = Bodies.rectangle(mouseX, 100, 50, 50, { restitution: 0.5 });
+            blocks.push(box);
+            Composite.add(engine.world, box);
+            
+            score++;
+            document.getElementById('score').innerText = "Blocks: " + score;
         });
 
-        window.addEventListener('keydown', (e) => {
-            if (e.key.toLowerCase() === 'a') ghost.angle += 0.4;
-            if (e.key.toLowerCase() === 'r' && gameOver) location.reload();
-        });
-
-        window.addEventListener('mousedown', () => {
-            if (canCreate && !gameOver) {
-                const config = blockConfigs[ghost.type];
-                let newBody;
-                if (ghost.type === "L_Shape") {
-                    const p1 = Bodies.rectangle(ghost.x, ghost.y + 25, 100, 50);
-                    const p2 = Bodies.rectangle(ghost.x - 25, ghost.y - 25, 50, 50);
-                    newBody = Body.create({ parts: [p1, p2] });
-                } else {
-                    newBody = Bodies.fromVertices(ghost.x, ghost.y, [config.vertices]);
-                }
-                Body.setAngle(newBody, ghost.angle);
-                newBody.friction = 0.8;
-                newBody.customType = ghost.type;
-                blocks.push(newBody);
-                Composite.add(world, newBody);
-                score++;
-                document.getElementById('score').innerText = `Blocks: ${score}`;
-                
-                canCreate = false;
-                setTimeout(() => {
-                    canCreate = true;
-                    ghost.type = Object.keys(blockConfigs)[Math.floor(Math.random() * 3)];
-                    ghost.angle = 0;
-                }, 1500);
-            }
-        });
-
-        // 그리기 루프
-        function draw() {
+        // 4. 애니메이션 루프 (그리기)
+        function update() {
             Engine.update(engine);
             ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-            // 바닥
+            // 바닥 그리기
             ctx.fillStyle = "#333";
-            ctx.fillRect(400 - (groundWidth/2), 680, groundWidth, 20);
+            ctx.fillRect(300 - 100, 660, 200, 40);
 
-            // 쌓인 블록
+            // 상자들 그리기
+            ctx.fillStyle = "red";
             blocks.forEach(body => {
+                const { x, y } = body.position;
                 ctx.save();
-                ctx.translate(body.position.x, body.position.y);
+                ctx.translate(x, y);
                 ctx.rotate(body.angle);
-                const config = blockConfigs[body.customType];
-                const img = getImg(config.image);
-                if (img.complete && img.naturalWidth !== 0) {
-                    ctx.drawImage(img, -50, -50, 100, 100);
-                } else {
-                    ctx.fillStyle = config.color;
-                    ctx.globalAlpha = 0.7;
-                    ctx.fillRect(-50, -50, 100, 100);
-                }
+                ctx.fillRect(-25, -25, 50, 50); // 50x50 크기 빨간 상자
                 ctx.restore();
-                if (body.position.y > 800) gameOver = true;
             });
 
-            // 미리보기
-            if (canCreate && !gameOver) {
-                ctx.save();
-                ctx.globalAlpha = 0.4;
-                ctx.translate(ghost.x, ghost.y);
-                ctx.rotate(ghost.angle);
-                const ghostImg = getImg(blockConfigs[ghost.type].image);
-                if (ghostImg.complete && ghostImg.naturalWidth !== 0) {
-                    ctx.drawImage(ghostImg, -50, -50, 100, 100);
-                } else {
-                    ctx.fillStyle = "gray";
-                    ctx.fillRect(-50, -50, 100, 100);
-                }
-                ctx.restore();
-            }
-
-            if (gameOver) {
-                ctx.fillStyle = "rgba(0,0,0,0.8)";
-                ctx.fillRect(0, 0, canvas.width, canvas.height);
-                ctx.fillStyle = "white";
-                ctx.textAlign = "center";
-                ctx.font = "bold 50px Arial";
-                ctx.fillText("GAME OVER", 400, 360);
-                ctx.font = "25px Arial";
-                ctx.fillText("Press 'R' to Restart", 400, 420);
-            }
-            requestAnimationFrame(draw);
+            requestAnimationFrame(update);
         }
-        draw();
+        update();
     </script>
 </body>
 </html>
