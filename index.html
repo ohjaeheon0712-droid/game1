@@ -2,28 +2,27 @@
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <title>High-Stack: Rank & Variety Edition</title>
+    <title>High-Stack: Pro Precision</title>
     <script src="https://cdn.jsdelivr.net/npm/poly-decomp@0.3.0/build/decomp.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"></script>
     <style>
         body { margin: 0; background: #1a1a1a; display: flex; justify-content: center; align-items: center; height: 100vh; overflow: hidden; font-family: 'Malgun Gothic', sans-serif; }
-        #ui { position: absolute; top: 20px; left: 20px; color: white; pointer-events: none; z-index: 10; background: rgba(0,0,0,0.8); padding: 20px; border-radius: 12px; border: 1px solid #444; min-width: 180px; }
-        canvas { background: #fff; border: 5px solid #333; box-shadow: 0 0 50px rgba(0,0,0,0.5); }
+        #ui { position: absolute; top: 20px; left: 20px; color: white; pointer-events: none; z-index: 10; background: rgba(0,0,0,0.85); padding: 20px; border-radius: 12px; border: 2px solid #444; min-width: 200px; }
+        canvas { background: #fff; border: 5px solid #333; box-shadow: 0 0 50px rgba(0,0,0,0.6); }
         #score { color: #00ff88; font-weight: bold; font-size: 1.8em; }
         #rank { color: #ffeb3b; font-weight: bold; font-size: 1.2em; margin-top: 5px; }
-        #loading { position: absolute; color: #ffeb3b; font-size: 24px; font-weight: bold; z-index: 100; text-shadow: 2px 2px 4px rgba(0,0,0,0.5); text-align: center; }
+        #cooldown { color: #ff4444; font-weight: bold; margin-top: 10px; font-size: 1.1em; }
+        #loading { position: absolute; color: #ffeb3b; font-size: 24px; font-weight: bold; z-index: 100; text-align: center; background: rgba(0,0,0,0.7); padding: 20px; border-radius: 10px; }
     </style>
 </head>
 <body>
-    <div id="loading">새로운 블록 이미지 분석 중...<br><span style="font-size: 0.6em; color: white;">잠시만 기다려주세요.</span></div>
+    <div id="loading">이미지 분석 및 크기 보정 중...</div>
     <div id="ui">
-        <div id="score-label">Blocks: <span id="score">0</span></div>
+        <div>Blocks: <span id="score">0</span></div>
         <div id="rank">Rank: 브론즈</div>
+        <div id="cooldown">READY!</div>
         <hr style="border: 0; border-top: 1px solid #444; margin: 10px 0;">
-        <div style="font-size: 0.85em; color: #ccc;">
-            [A] 회전 | [Click] 낙하 | [R] 재시작
-        </div>
-        <div style="margin-top:10px; font-size: 0.75em; color: #ff5555;">빨간선: 실제 충돌 범위</div>
+        <div style="font-size: 0.85em; color: #ccc;">[A] 회전 | [Click] 낙하 | [R] 재시작</div>
     </div>
     <canvas id="gameCanvas"></canvas>
 
@@ -36,17 +35,45 @@
         const ctx = canvas.getContext('2d');
         canvas.width = 800;
         canvas.height = 750;
-        engine.gravity.y = 1.5;
+        engine.gravity.y = 1.8; // 중력을 조금 더 높여 안정감 부여
 
         const FIXED_SIZE = 100;
+        const COOLDOWN_MS = 5000;
 
-        // --- 정밀 외곽선 추출 ---
+        // --- ⭐ 핵심: 이미지 내 실제 물체 크기만 추출하여 100x100으로 표준화 ---
         function getPreciseVertices(img, targetSize) {
+            const scanCanvas = document.createElement('canvas');
+            const sCtx = scanCanvas.getContext('2d');
+            scanCanvas.width = img.width;
+            scanCanvas.height = img.height;
+            sCtx.drawImage(img, 0, 0);
+            const fullData = sCtx.getImageData(0, 0, img.width, img.height).data;
+            
+            let minX = img.width, minY = img.height, maxX = 0, maxY = 0;
+            let found = false;
+
+            // 1. 투명하지 않은 픽셀의 경계(Bounding Box) 찾기
+            for (let y = 0; y < img.height; y++) {
+                for (let x = 0; x < img.width; x++) {
+                    if (fullData[(y * img.width + x) * 4 + 3] > 50) {
+                        if (x < minX) minX = x; if (x > maxX) maxX = x;
+                        if (y < minY) minY = y; if (y > maxY) maxY = y;
+                        found = true;
+                    }
+                }
+            }
+            if (!found) { minX = 0; minY = 0; maxX = img.width; maxY = img.height; }
+
+            const contentW = maxX - minX;
+            const contentH = maxY - minY;
+
+            // 2. 경계 내부만 잘라서 targetSize(100x100) 캔버스에 그리기
             const tempCanvas = document.createElement('canvas');
             const tCtx = tempCanvas.getContext('2d');
             tempCanvas.width = targetSize;
             tempCanvas.height = targetSize;
-            tCtx.drawImage(img, 0, 0, targetSize, targetSize);
+            tCtx.drawImage(img, minX, minY, contentW, contentH, 0, 0, targetSize, targetSize);
+            
             const imageData = tCtx.getImageData(0, 0, targetSize, targetSize).data;
             let points = [];
             for (let y = 0; y < targetSize; y += 3) { 
@@ -57,10 +84,14 @@
             }
             const hull = Vertices.hull(points);
             const center = Vertices.centre(hull);
-            return hull.map(p => ({ x: p.x - center.x, y: p.y - center.y }));
+            
+            return {
+                vertices: hull.map(p => ({ x: p.x - center.x, y: p.y - center.y })),
+                // 그릴 때 사용할 보정된 이미지 데이터 저장
+                croppedCanvas: tempCanvas 
+            };
         }
 
-        // --- 랭크 계산기 ---
         function getRank(s) {
             if (s >= 50) return { name: "신 (GOD)", color: "#ffffff" };
             if (s >= 35) return { name: "다이아몬드", color: "#00e5ff" };
@@ -70,7 +101,6 @@
             return { name: "브론즈", color: "#cd7f32" };
         }
 
-        // --- 이미지 설정 (새 파일 포함 총 8종) ---
         const configs = {
             "img1": { path: "images/9aff562fdf575bcacbea3cd3330c576e (1).png" },
             "img2": { path: "images/9aff562fdf575bcacbea3cd3330c576e (2).png" },
@@ -82,8 +112,8 @@
             "img8": { path: "images/63a1aff59ec47d0b600ea81c51125b1d (1).png" }
         };
 
-        const ground = Bodies.rectangle(400, 710, 400, 40, { 
-            isStatic: true, friction: 1.0, frictionStatic: 10 
+        const ground = Bodies.rectangle(400, 710, 420, 40, { 
+            isStatic: true, friction: 1.0, frictionStatic: 20 
         });
         Composite.add(engine.world, ground);
 
@@ -93,15 +123,17 @@
         let ghost = { x: 400, y: 100, angle: 0, type: keys[0] };
         let gameOver = false;
         let isReady = false;
+        let cooldownActive = false;
+        let cooldownTimeRemaining = 0;
 
-        // 이미지 로드
         let loaded = 0;
         keys.forEach(key => {
             const img = new Image();
             img.src = configs[key].path;
             img.onload = () => {
-                configs[key].vertices = getPreciseVertices(img, FIXED_SIZE);
-                configs[key].imgElem = img;
+                const result = getPreciseVertices(img, FIXED_SIZE);
+                configs[key].vertices = result.vertices;
+                configs[key].imgElem = result.croppedCanvas; // 보정된 캔버스를 이미지로 사용
                 loaded++;
                 if (loaded === keys.length) {
                     isReady = true;
@@ -121,10 +153,17 @@
         });
 
         window.addEventListener('mousedown', () => {
-            if (!isReady || gameOver) return;
+            if (!isReady || gameOver || cooldownActive) return;
+            
             const conf = configs[ghost.type];
+            // ⭐ 미끄럼 방지용 고마찰 물리 옵션
             const newBlock = Bodies.fromVertices(ghost.x, ghost.y, [conf.vertices], {
-                friction: 1.0, frictionStatic: 15.0, restitution: 0.05, frictionAir: 0.03, slop: 0.05
+                friction: 1.0, 
+                frictionStatic: 20.0, 
+                restitution: 0.02, 
+                frictionAir: 0.04,
+                density: 0.05,
+                slop: 0.05
             });
 
             if (newBlock) {
@@ -136,25 +175,41 @@
                 score++;
                 document.getElementById('score').innerText = score;
                 const r = getRank(score);
-                const rankEl = document.getElementById('rank');
-                rankEl.innerText = "Rank: " + r.name;
-                rankEl.style.color = r.color;
+                document.getElementById('rank').innerText = "Rank: " + r.name;
+                document.getElementById('rank').style.color = r.color;
 
-                isReady = false;
-                setTimeout(() => {
-                    ghost.type = keys[Math.floor(Math.random() * keys.length)];
-                    ghost.angle = 0;
-                    isReady = true;
-                }, 800);
+                // 5초 쿨타임 시작
+                startCooldown();
             }
         });
+
+        function startCooldown() {
+            cooldownActive = true;
+            cooldownTimeRemaining = 5;
+            const cdDisplay = document.getElementById('cooldown');
+            
+            const timer = setInterval(() => {
+                cooldownTimeRemaining--;
+                if (cooldownTimeRemaining > 0) {
+                    cdDisplay.innerText = `COOLDOWN: ${cooldownTimeRemaining}s`;
+                } else {
+                    clearInterval(timer);
+                    cdDisplay.innerText = "READY!";
+                    cooldownActive = false;
+                    ghost.type = keys[Math.floor(Math.random() * keys.length)];
+                    ghost.angle = 0;
+                }
+            }, 1000);
+            cdDisplay.innerText = `COOLDOWN: 5s`;
+        }
 
         function draw() {
             Engine.update(engine);
             ctx.clearRect(0, 0, canvas.width, canvas.height);
 
+            // 바닥
             ctx.fillStyle = "#333";
-            ctx.fillRect(400 - 200, 690, 400, 40);
+            ctx.fillRect(400 - 210, 690, 420, 40);
 
             blocks.forEach(body => {
                 const conf = configs[body.customType];
@@ -164,7 +219,7 @@
                 ctx.drawImage(conf.imgElem, -FIXED_SIZE/2, -FIXED_SIZE/2, FIXED_SIZE, FIXED_SIZE);
                 ctx.restore();
 
-                // 빨간선 물리 디버그
+                // 빨간선 디버그
                 ctx.beginPath();
                 body.parts.forEach(part => {
                     part.vertices.forEach((v, i) => {
@@ -173,15 +228,17 @@
                     ctx.lineTo(part.vertices[0].x, part.vertices[0].y);
                 });
                 ctx.strokeStyle = "red";
+                ctx.lineWidth = 1;
                 ctx.stroke();
 
                 if (body.position.y > 850) gameOver = true;
             });
 
+            // 미리보기 (쿨타임 중에는 투명도 더 낮춤)
             if (isReady && !gameOver) {
                 const conf = configs[ghost.type];
                 ctx.save();
-                ctx.globalAlpha = 0.5;
+                ctx.globalAlpha = cooldownActive ? 0.15 : 0.5;
                 ctx.translate(ghost.x, ghost.y);
                 ctx.rotate(ghost.angle);
                 ctx.drawImage(conf.imgElem, -FIXED_SIZE/2, -FIXED_SIZE/2, FIXED_SIZE, FIXED_SIZE);
@@ -197,7 +254,7 @@
                 ctx.fillText("GAME OVER", 400, 350);
                 ctx.fillStyle = "white";
                 ctx.font = "25px Arial";
-                ctx.fillText("Rank: " + getRank(score).name + " (" + score + "개)", 400, 410);
+                ctx.fillText("최종 랭크: " + getRank(score).name, 400, 410);
             }
             requestAnimationFrame(draw);
         }
