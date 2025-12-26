@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <title>High-Stack: Pro Stable Camera</title>
+    <title>High-Stack: Intelligent Camera Fix</title>
     <script src="https://cdn.jsdelivr.net/npm/poly-decomp@0.3.0/build/decomp.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"></script>
     <style>
@@ -16,7 +16,7 @@
     </style>
 </head>
 <body>
-    <div id="loading">카메라 안정화 시스템 적용 중...</div>
+    <div id="loading">카메라 지능형 추적 시스템 적용 중...</div>
     <div id="ui">
         <div>Blocks: <span id="score">0</span></div>
         <div id="rank">Rank: 브론즈</div>
@@ -27,11 +27,11 @@
     <canvas id="gameCanvas"></canvas>
 
     <script>
-        const { Engine, Bodies, Composite, Body, Common, Vertices } = Matter;
+        const { Engine, Bodies, Composite, Body, Common, Vertices, Events } = Matter;
         Common.setDecomp(decomp);
 
         const engine = Engine.create({
-            enableSleeping: true,
+            enableSleeping: true, // 수면 모드 활성화 (멈춘 물체 감지용)
             positionIterations: 12,
             velocityIterations: 12
         });
@@ -44,13 +44,12 @@
 
         const FIXED_SIZE = 100;
         const GROUND_WIDTH = 500;
-        const GROUND_Y = 680; // ⭐ 바닥 높이를 조금 낮춤
+        const GROUND_Y = 720; // ⭐ 바닥을 더 낮춤
         const GROUND_HEIGHT = 60;
 
         let viewOffset = 0; 
-        let maxViewOffset = 0; // 화면이 아래로 다시 내려가지 않도록 고정하는 값
+        let maxViewOffset = 0; 
 
-        // 고정된 랭크 시스템
         function getRank(s) {
             if (s >= 30) return { name: "신 (GOD)", color: "#ffffff" };
             if (s >= 22) return { name: "다이아몬드", color: "#00e5ff" };
@@ -63,8 +62,7 @@
         function getPreciseVertices(img, targetSize) {
             const scanCanvas = document.createElement('canvas');
             const sCtx = scanCanvas.getContext('2d');
-            scanCanvas.width = img.width;
-            scanCanvas.height = img.height;
+            scanCanvas.width = img.width; scanCanvas.height = img.height;
             sCtx.drawImage(img, 0, 0);
             const fullData = sCtx.getImageData(0, 0, img.width, img.height).data;
             let minX = img.width, minY = img.height, maxX = 0, maxY = 0;
@@ -78,24 +76,22 @@
                     }
                 }
             }
-            if (!found) { minX = 0; minY = 0; maxX = img.width; maxY = img.height; }
-            const tempCanvas = document.createElement('canvas');
-            const tCtx = tempCanvas.getContext('2d');
-            tempCanvas.width = targetSize;
-            tempCanvas.height = targetSize;
-            tCtx.drawImage(img, minX, minY, maxX - minX, maxY - minY, 0, 0, targetSize, targetSize);
-            const imageData = tCtx.getImageData(0, 0, targetSize, targetSize).data;
-            let points = [];
-            for (let y = 0; y < targetSize; y += 3) { 
+            const tCanvas = document.createElement('canvas');
+            tCanvas.width = targetSize; tCanvas.height = targetSize;
+            const tc = tCanvas.getContext('2d');
+            tc.drawImage(img, minX, minY, maxX-minX, maxY-minY, 0, 0, targetSize, targetSize);
+            const data = tc.getImageData(0, 0, targetSize, targetSize).data;
+            let pts = [];
+            for (let y = 0; y < targetSize; y += 3) {
                 for (let x = 0; x < targetSize; x += 3) {
-                    if (imageData[(y * targetSize + x) * 4 + 3] > 120) points.push({ x, y });
+                    if (data[(y * targetSize + x) * 4 + 3] > 120) pts.push({ x, y });
                 }
             }
-            const hull = Vertices.hull(points);
-            const center = Vertices.centre(hull);
+            const hull = Vertices.hull(pts);
+            const ctr = Vertices.centre(hull);
             return {
-                vertices: hull.map(p => ({ x: p.x - center.x, y: p.y - center.y })),
-                croppedCanvas: tempCanvas 
+                vertices: hull.map(p => ({ x: p.x - ctr.x, y: p.y - ctr.y })),
+                img: tCanvas
             };
         }
 
@@ -118,22 +114,20 @@
         let blocks = [];
         let score = 0;
         let keys = Object.keys(configs);
-        let ghost = { x: 400, y: 100, angle: 0, type: keys[0] };
+        let ghost = { x: 400, y: 80, angle: 0, type: keys[0] };
         let gameOver = false;
         let isReady = false;
         let cooldownActive = false;
-        let cooldownTimeRemaining = 0;
+        let cooldownRemaining = 0;
 
         let loaded = 0;
-        keys.forEach(key => {
-            const img = new Image();
-            img.src = configs[key].path;
-            img.onload = () => {
-                const res = getPreciseVertices(img, FIXED_SIZE);
-                configs[key].vertices = res.vertices;
-                configs[key].imgElem = res.croppedCanvas;
-                loaded++;
-                if (loaded === keys.length) {
+        keys.forEach(k => {
+            const i = new Image(); i.src = configs[k].path;
+            i.onload = () => {
+                const res = getPreciseVertices(i, FIXED_SIZE);
+                configs[k].vertices = res.vertices;
+                configs[k].imgElem = res.img;
+                if (++loaded === keys.length) {
                     isReady = true;
                     document.getElementById('loading').style.display = 'none';
                 }
@@ -141,8 +135,8 @@
         });
 
         window.addEventListener('mousemove', (e) => {
-            const rect = canvas.getBoundingClientRect();
-            ghost.x = (e.clientX - rect.left) * (canvas.width / rect.width);
+            const r = canvas.getBoundingClientRect();
+            ghost.x = (e.clientX - r.left) * (canvas.width / r.width);
         });
 
         window.addEventListener('keydown', (e) => {
@@ -153,17 +147,15 @@
         window.addEventListener('mousedown', () => {
             if (!isReady || gameOver || cooldownActive) return;
             const conf = configs[ghost.type];
-            // 현재 카메라 위치(viewOffset)를 반영한 월드 상단 좌표에서 생성
-            const dropY = 100 - viewOffset;
-            const newBlock = Bodies.fromVertices(ghost.x, dropY, [conf.vertices], {
-                friction: 1.0, frictionStatic: 100.0, restitution: 0, 
-                frictionAir: 0.05, density: 1.5, slop: 0.01, sleepThreshold: 60
+            const dropY = 80 - viewOffset; 
+            const b = Bodies.fromVertices(ghost.x, dropY, [conf.vertices], {
+                friction: 1.0, frictionStatic: 100.0, restitution: 0, density: 1.5, sleepThreshold: 60
             });
-            if (newBlock) {
-                Body.setAngle(newBlock, ghost.angle);
-                newBlock.customType = ghost.type;
-                blocks.push(newBlock);
-                Composite.add(engine.world, newBlock);
+            if (b) {
+                Body.setAngle(b, ghost.angle);
+                b.customType = ghost.type;
+                blocks.push(b);
+                Composite.add(engine.world, b);
                 score++;
                 document.getElementById('score').innerText = score;
                 const r = getRank(score);
@@ -175,100 +167,79 @@
 
         function startCooldown() {
             cooldownActive = true;
-            cooldownTimeRemaining = 3; 
-            const cdDisplay = document.getElementById('cooldown');
-            const timer = setInterval(() => {
-                cooldownTimeRemaining--;
-                if (cooldownTimeRemaining > 0) {
-                    cdDisplay.innerText = `COOLDOWN: ${cooldownTimeRemaining}s`;
-                } else {
-                    clearInterval(timer);
-                    cdDisplay.innerText = "READY!";
-                    cooldownActive = false;
-                    ghost.type = keys[Math.floor(Math.random() * keys.length)];
-                    ghost.angle = 0;
-                }
+            cooldownRemaining = 3;
+            const cd = document.getElementById('cooldown');
+            const t = setInterval(() => {
+                if (--cooldownRemaining > 0) cd.innerText = `COOLDOWN: ${cooldownRemaining}s`;
+                else { clearInterval(t); cd.innerText = "READY!"; cooldownActive = false; ghost.type = keys[Math.floor(Math.random()*keys.length)]; ghost.angle = 0; }
             }, 1000);
-            cdDisplay.innerText = `COOLDOWN: 3s`;
+            cd.innerText = `COOLDOWN: 3s`;
         }
 
         function draw() {
             Engine.update(engine);
             ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-            // ⭐ 카메라 로직 개선: 안착한 블록만 추적
+            // ⭐ 카메라 로직: 수면 상태(완전히 멈춘) 블록만 추적
             let highestStableY = GROUND_Y;
-            blocks.forEach(b => { 
-                // 수직 속도가 낮고(낙하 중이 아님) 바닥보다 위에 있는 블록만 계산
-                if (Math.abs(b.velocity.y) < 0.5 && b.position.y < highestStableY) {
-                    highestStableY = b.position.y; 
+            blocks.forEach(b => {
+                // 블록이 '수면(Sleeping)' 상태이거나 속도가 0에 가깝고,
+                // 생성 지점(현재 뷰 기준 200px)보다 아래에 있는 경우에만 타워 높이로 인정
+                if ((b.isSleeping || Math.abs(b.velocity.y) < 0.1) && 
+                     b.position.y < highestStableY && 
+                     b.position.y > (150 - viewOffset)) { // 생성 영역 보호
+                    highestStableY = b.position.y;
                 }
             });
             
-            // 가장 높은 안착 블록이 화면 상단 350px 지점보다 올라가면 카메라 이동
-            const targetOffset = highestStableY < 350 ? 350 - highestStableY : 0;
+            // 타워 높이가 화면 상단 280px 지점까지 올라오면 카메라 이동
+            const targetOffset = highestStableY < 280 ? 280 - highestStableY : 0;
+            if (targetOffset > maxViewOffset) maxViewOffset = targetOffset;
             
-            // 화면이 아래로 덜덜 떨리며 내려오는 것을 방지 (최대 오프셋 기록)
-            if (targetOffset > maxViewOffset) {
-                maxViewOffset = targetOffset;
-            }
-            
-            // 부드러운 스크롤링
             viewOffset += (maxViewOffset - viewOffset) * 0.05;
 
             ctx.save();
-            ctx.translate(0, viewOffset); 
+            ctx.translate(0, viewOffset);
 
-            // 바닥판
-            const gx = 400 - (GROUND_WIDTH/2);
-            const gy = GROUND_Y - (GROUND_HEIGHT/2);
+            // 바닥
             ctx.fillStyle = "#e67e22";
-            ctx.fillRect(gx, gy, GROUND_WIDTH, GROUND_HEIGHT);
-            ctx.strokeStyle = "#a84300";
-            ctx.lineWidth = 4;
-            ctx.strokeRect(gx, gy, GROUND_WIDTH, GROUND_HEIGHT);
+            ctx.fillRect(400-(GROUND_WIDTH/2), GROUND_Y-(GROUND_HEIGHT/2), GROUND_WIDTH, GROUND_HEIGHT);
+            ctx.strokeStyle = "#a84300"; ctx.lineWidth = 4;
+            ctx.strokeRect(400-(GROUND_WIDTH/2), GROUND_Y-(GROUND_HEIGHT/2), GROUND_WIDTH, GROUND_HEIGHT);
 
-            blocks.forEach(body => {
-                const conf = configs[body.customType];
+            blocks.forEach(b => {
+                const conf = configs[b.customType];
                 ctx.save();
-                ctx.translate(body.position.x, body.position.y);
-                ctx.rotate(body.angle);
-                if (body.isSleeping) ctx.globalAlpha = 0.95;
-                ctx.drawImage(conf.imgElem, -FIXED_SIZE/2, -FIXED_SIZE/2, FIXED_SIZE, FIXED_SIZE);
+                ctx.translate(b.position.x, b.position.y);
+                ctx.rotate(b.angle);
+                if (b.isSleeping) ctx.globalAlpha = 0.95;
+                ctx.drawImage(conf.imgElem, -50, -50, 100, 100);
                 ctx.restore();
 
                 ctx.beginPath();
-                body.parts.forEach(part => {
-                    part.vertices.forEach((v, i) => { i === 0 ? ctx.moveTo(v.x, v.y) : ctx.lineTo(v.x, v.y); });
-                    ctx.lineTo(part.vertices[0].x, part.vertices[0].y);
+                b.parts.forEach(p => {
+                    p.vertices.forEach((v, i) => i===0 ? ctx.moveTo(v.x, v.y) : ctx.lineTo(v.x, v.y));
+                    ctx.lineTo(p.vertices[0].x, p.vertices[0].y);
                 });
-                ctx.strokeStyle = body.isSleeping ? "#3498db" : "#e74c3c";
-                ctx.lineWidth = 1;
+                ctx.strokeStyle = b.isSleeping ? "#3498db" : "#e74c3c";
                 ctx.stroke();
 
-                // 게임 오버: 현재 화면 하단(바닥 기준)에서 한참 벗어나면 종료
-                if (body.position.y > GROUND_Y + 400) gameOver = true;
+                if (b.position.y > GROUND_Y + 500) gameOver = true;
             });
-
             ctx.restore();
 
-            // 미리보기 (고스트)
+            // 고스트 (화면 상단 고정)
             if (isReady && !gameOver) {
                 const conf = configs[ghost.type];
-                ctx.save();
-                ctx.globalAlpha = cooldownActive ? 0.15 : 0.5;
-                ctx.translate(ghost.x, 100); 
-                ctx.rotate(ghost.angle);
-                ctx.drawImage(conf.imgElem, -FIXED_SIZE/2, -FIXED_SIZE/2, FIXED_SIZE, FIXED_SIZE);
+                ctx.save(); ctx.globalAlpha = cooldownActive ? 0.15 : 0.5;
+                ctx.translate(ghost.x, 80); ctx.rotate(ghost.angle);
+                ctx.drawImage(conf.imgElem, -50, -50, 100, 100);
                 ctx.restore();
             }
 
             if (gameOver) {
-                ctx.fillStyle = "rgba(0,0,0,0.85)";
-                ctx.fillRect(0, 0, canvas.width, canvas.height);
-                ctx.fillStyle = "#ff4444";
-                ctx.textAlign = "center";
-                ctx.font = "bold 60px Arial";
+                ctx.fillStyle = "rgba(0,0,0,0.85)"; ctx.fillRect(0,0,canvas.width,canvas.height);
+                ctx.fillStyle = "#ff4444"; ctx.textAlign = "center"; ctx.font = "bold 60px Arial";
                 ctx.fillText("GAME OVER", 400, 350);
             }
             requestAnimationFrame(draw);
