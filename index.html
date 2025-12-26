@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <title>High-Stack: Infinite Scroll Edition</title>
+    <title>High-Stack: Pro Stable Camera</title>
     <script src="https://cdn.jsdelivr.net/npm/poly-decomp@0.3.0/build/decomp.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"></script>
     <style>
@@ -16,7 +16,7 @@
     </style>
 </head>
 <body>
-    <div id="loading">무한 스택 시스템 가동 중...</div>
+    <div id="loading">카메라 안정화 시스템 적용 중...</div>
     <div id="ui">
         <div>Blocks: <span id="score">0</span></div>
         <div id="rank">Rank: 브론즈</div>
@@ -44,12 +44,13 @@
 
         const FIXED_SIZE = 100;
         const GROUND_WIDTH = 500;
-        const GROUND_Y = 600; 
+        const GROUND_Y = 680; // ⭐ 바닥 높이를 조금 낮춤
         const GROUND_HEIGHT = 60;
 
-        let viewOffset = 0; // 카메라 위치 (화면 스크롤용)
+        let viewOffset = 0; 
+        let maxViewOffset = 0; // 화면이 아래로 다시 내려가지 않도록 고정하는 값
 
-        // 랭크 시스템 고정 (0~5, 5~9, 9~15, 15~22, 22~30, 30~)
+        // 고정된 랭크 시스템
         function getRank(s) {
             if (s >= 30) return { name: "신 (GOD)", color: "#ffffff" };
             if (s >= 22) return { name: "다이아몬드", color: "#00e5ff" };
@@ -59,7 +60,6 @@
             return { name: "브론즈", color: "#cd7f32" };
         }
 
-        // 이미지 분석 및 정밀 충돌체 생성
         function getPreciseVertices(img, targetSize) {
             const scanCanvas = document.createElement('canvas');
             const sCtx = scanCanvas.getContext('2d');
@@ -80,12 +80,11 @@
             }
             if (!found) { minX = 0; minY = 0; maxX = img.width; maxY = img.height; }
             const tempCanvas = document.createElement('canvas');
-            const tCtx = tempCanvas.createElement ? null : tempCanvas.getContext('2d');
+            const tCtx = tempCanvas.getContext('2d');
             tempCanvas.width = targetSize;
             tempCanvas.height = targetSize;
-            const tCtxReal = tempCanvas.getContext('2d');
-            tCtxReal.drawImage(img, minX, minY, maxX - minX, maxY - minY, 0, 0, targetSize, targetSize);
-            const imageData = tCtxReal.getImageData(0, 0, targetSize, targetSize).data;
+            tCtx.drawImage(img, minX, minY, maxX - minX, maxY - minY, 0, 0, targetSize, targetSize);
+            const imageData = tCtx.getImageData(0, 0, targetSize, targetSize).data;
             let points = [];
             for (let y = 0; y < targetSize; y += 3) { 
                 for (let x = 0; x < targetSize; x += 3) {
@@ -154,7 +153,7 @@
         window.addEventListener('mousedown', () => {
             if (!isReady || gameOver || cooldownActive) return;
             const conf = configs[ghost.type];
-            // 고스트 위치는 현재 뷰(viewOffset)를 반영한 월드 좌표여야 함
+            // 현재 카메라 위치(viewOffset)를 반영한 월드 상단 좌표에서 생성
             const dropY = 100 - viewOffset;
             const newBlock = Bodies.fromVertices(ghost.x, dropY, [conf.vertices], {
                 friction: 1.0, frictionStatic: 100.0, restitution: 0, 
@@ -176,7 +175,7 @@
 
         function startCooldown() {
             cooldownActive = true;
-            cooldownTimeRemaining = 3; // ⭐ 쿨타임 3초로 단축
+            cooldownTimeRemaining = 3; 
             const cdDisplay = document.getElementById('cooldown');
             const timer = setInterval(() => {
                 cooldownTimeRemaining--;
@@ -197,19 +196,30 @@
             Engine.update(engine);
             ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-            // ⭐ 카메라 로직: 가장 높은 블록 찾기
-            let highestY = GROUND_Y;
-            blocks.forEach(b => { if (b.position.y < highestY) highestY = b.position.y; });
+            // ⭐ 카메라 로직 개선: 안착한 블록만 추적
+            let highestStableY = GROUND_Y;
+            blocks.forEach(b => { 
+                // 수직 속도가 낮고(낙하 중이 아님) 바닥보다 위에 있는 블록만 계산
+                if (Math.abs(b.velocity.y) < 0.5 && b.position.y < highestStableY) {
+                    highestStableY = b.position.y; 
+                }
+            });
             
-            // 가장 높은 블록이 화면 위쪽(300px 지점)에 도달하면 viewOffset 조정
-            const targetOffset = highestY < 300 ? 300 - highestY : 0;
-            // 부드러운 화면 이동 (Lerp)
-            viewOffset += (targetOffset - viewOffset) * 0.1;
+            // 가장 높은 안착 블록이 화면 상단 350px 지점보다 올라가면 카메라 이동
+            const targetOffset = highestStableY < 350 ? 350 - highestStableY : 0;
+            
+            // 화면이 아래로 덜덜 떨리며 내려오는 것을 방지 (최대 오프셋 기록)
+            if (targetOffset > maxViewOffset) {
+                maxViewOffset = targetOffset;
+            }
+            
+            // 부드러운 스크롤링
+            viewOffset += (maxViewOffset - viewOffset) * 0.05;
 
             ctx.save();
-            ctx.translate(0, viewOffset); // 전체 화면 밀어올리기
+            ctx.translate(0, viewOffset); 
 
-            // 바닥판 그리기
+            // 바닥판
             const gx = 400 - (GROUND_WIDTH/2);
             const gy = GROUND_Y - (GROUND_HEIGHT/2);
             ctx.fillStyle = "#e67e22";
@@ -227,7 +237,6 @@
                 ctx.drawImage(conf.imgElem, -FIXED_SIZE/2, -FIXED_SIZE/2, FIXED_SIZE, FIXED_SIZE);
                 ctx.restore();
 
-                // 충돌선 시각화
                 ctx.beginPath();
                 body.parts.forEach(part => {
                     part.vertices.forEach((v, i) => { i === 0 ? ctx.moveTo(v.x, v.y) : ctx.lineTo(v.x, v.y); });
@@ -237,18 +246,17 @@
                 ctx.lineWidth = 1;
                 ctx.stroke();
 
-                // 게임 오버 조건: 바닥 한참 아래로 떨어지면 종료
-                if (body.position.y > GROUND_Y + 500) gameOver = true;
+                // 게임 오버: 현재 화면 하단(바닥 기준)에서 한참 벗어나면 종료
+                if (body.position.y > GROUND_Y + 400) gameOver = true;
             });
 
-            ctx.restore(); // 월드 객체들 그리기 종료
+            ctx.restore();
 
-            // UI 요소 (고스트 블록) - 카메라이동에 영향받지 않게 하거나 계산해서 그림
+            // 미리보기 (고스트)
             if (isReady && !gameOver) {
                 const conf = configs[ghost.type];
                 ctx.save();
                 ctx.globalAlpha = cooldownActive ? 0.15 : 0.5;
-                // 고스트는 항상 화면 상단 100px 위치에 고정 (viewOffset 무시하는 위치 계산)
                 ctx.translate(ghost.x, 100); 
                 ctx.rotate(ghost.angle);
                 ctx.drawImage(conf.imgElem, -FIXED_SIZE/2, -FIXED_SIZE/2, FIXED_SIZE, FIXED_SIZE);
